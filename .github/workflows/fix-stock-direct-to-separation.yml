@@ -1,0 +1,57 @@
+name: Corrigir estoque direto para separacao
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-stock-direct-to-separation.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Corrigir regra central de estoque
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          files = [
+              Path('public/app.js'),
+              Path('public/bulk-source-choice-v2.js'),
+              Path('public/source-choice.js'),
+              Path('public/xlsx-import-fix.js'),
+          ]
+
+          old = "if (material.source === 'estoque') return 'reservar_estoque';"
+          new = "if (material.source === 'estoque') return 'pronto_separar';"
+
+          changed = []
+          for path in files:
+              if not path.exists():
+                  continue
+              text = path.read_text(encoding='utf-8')
+              if old in text:
+                  path.write_text(text.replace(old, new), encoding='utf-8')
+                  changed.append(str(path))
+
+          if not changed:
+              raise SystemExit('A regra esperada não foi encontrada em nenhum arquivo.')
+
+          print('Arquivos corrigidos:')
+          print('\n'.join(changed))
+          PY
+
+      - name: Publicar correção
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/app.js public/bulk-source-choice-v2.js public/source-choice.js public/xlsx-import-fix.js
+          git commit -m "Enviar materiais de estoque direto para separacao"
+          git push
