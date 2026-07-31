@@ -50,7 +50,7 @@ async function loadMeasuresFeature() {
   if (loaded.medidas) return;
   loaded.medidas = true;
   try {
-    await import('./queue-measures.js?v=20260731-1438');
+    await import('./queue-measures.js?v=20260731-1456');
   } catch (error) {
     loaded.medidas = false;
     console.error('Falha ao carregar medidas das filas:', error);
@@ -61,7 +61,7 @@ async function loadPurchaseQueueFilter() {
   if (loaded.filaCompras) return;
   loaded.filaCompras = true;
   try {
-    await import('./purchase-queue-filter.js?v=20260731-1453');
+    await import('./purchase-queue-filter.js?v=20260731-1456');
   } catch (error) {
     loaded.filaCompras = false;
     console.error('Falha ao corrigir a fila de compras:', error);
@@ -75,7 +75,7 @@ async function loadRouteFeature() {
     if (!loaded.importar) {
       loaded.importar = true;
       try {
-        await import('./xlsx-import-fix.js?v=20260731-1400');
+        await import('./xlsx-import-fix.js?v=20260731-1456');
       } catch (error) {
         loaded.importar = false;
         console.error('Falha ao carregar importador XLSX:', error);
@@ -96,7 +96,7 @@ async function loadRouteFeature() {
   if (route === 'compras' && !loaded.compras) {
     loaded.compras = true;
     try {
-      await import('./bulk-purchase.js?v=20260731-1400');
+      await import('./bulk-purchase.js?v=20260731-1456');
     } catch (error) {
       loaded.compras = false;
       console.error('Falha ao carregar compra em lote:', error);
