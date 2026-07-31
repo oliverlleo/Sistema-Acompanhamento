@@ -23,21 +23,9 @@ const importState = {
   fileName: '',
   rows: [],
   sheetNames: [],
+  sheetStats: [],
+  ignoredRows: 0,
   processing: false
-};
-
-const IMPORT_SYNONYMS = {
-  code: ['codigo', 'cod', 'perfil', 'item', 'referencia', 'produto referencia'],
-  description: ['descricao', 'produto', 'modelo', 'linha extraida do pdf', 'descricao do vidro'],
-  type: ['tipo', 'tipologia'],
-  quantity: ['quantidade', 'qtde', 'qtd', 'qtde prev', 'qtde barras', 'qtde total'],
-  unit: ['unidade', 'un'],
-  color: ['cor', 'tratamento cor', 'acabamento'],
-  width: ['largura', 'l'],
-  height: ['altura', 'h', 'a'],
-  length: ['comprimento', 'comp barra mm', 'medida'],
-  area: ['area m2', 'area', 'm2 compra', 'm2 corte'],
-  notes: ['observacoes', 'obs']
 };
 
 const STATUS_STAGE = {
@@ -56,13 +44,39 @@ const STATUS_STAGE = {
   enviado_obra: 100
 };
 
-function $(selector, root = document) {
-  return root.querySelector(selector);
-}
+const HEADER_TERMS = new Set([
+  'codigo', 'codigo do vidro', 'descricao', 'descricao do vidro', 'perfil',
+  'produto referencia', 'linha extraida do pdf', 'tipo', 'tipologia',
+  'qtde', 'qtde prev', 'quantidade', 'qtd', 'unidade', 'un', 'unit',
+  'cor', 'tratamento cor', 'largura', 'altura', 'l', 'a', 'h', 'medida',
+  'peso kg', 'area m2', 'm2 corte', 'm2 compra', 'custo', 'observacoes', 'obs'
+]);
 
-function $$(selector, root = document) {
-  return [...root.querySelectorAll(selector)];
-}
+const STOP_ROW_PATTERNS = [
+  /^resumo da conferencia\b/,
+  /^observacoes gerais\b/,
+  /^pendencias gerais\b/
+];
+
+const NOISE_PATTERNS = [
+  /checklist de conferencia/,
+  /^obra\b/,
+  /^doc\b/,
+  /^pdf\b/,
+  /^orientacao\b/,
+  /^total previsto\b/,
+  /^total qtd\b/,
+  /^total quantidade\b/,
+  /^total m2\b/,
+  /^linhas identificadas\b/,
+  /^itens\b/,
+  /^responsavel\b/,
+  /^conferente\b/,
+  /^responsavel da producao\b/
+];
+
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, character => ({
@@ -90,7 +104,7 @@ function num(value) {
 }
 
 function formatQty(value) {
-  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(num(value));
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(num(value));
 }
 
 function isPast(date) {
@@ -126,29 +140,57 @@ function toast(message, type = 'success') {
   element.className = `toast ${type}`;
   element.textContent = message;
   host.appendChild(element);
-  setTimeout(() => element.remove(), 4200);
+  setTimeout(() => element.remove(), 4500);
+}
+
+function rowValues(row) {
+  return row.filter(value => value !== '' && value !== null && value !== undefined);
+}
+
+function isSeparator(value) {
+  const text = String(value || '').trim();
+  return Boolean(text) && /^[_\-=.\s]+$/.test(text);
+}
+
+function isStopRow(row) {
+  const values = rowValues(row);
+  if (!values.length) return false;
+  const first = normalizeText(values[0]);
+  return STOP_ROW_PATTERNS.some(pattern => pattern.test(first));
+}
+
+function isNoiseRow(row) {
+  const values = rowValues(row);
+  if (!values.length) return true;
+  if (isSeparator(values[0])) return true;
+  const first = normalizeText(values[0]);
+  const joined = normalizeText(values.join(' '));
+  if (NOISE_PATTERNS.some(pattern => pattern.test(first) || pattern.test(joined))) return true;
+  return false;
 }
 
 function detectHeaderRow(matrix) {
-  let bestIndex = 0;
+  let bestIndex = -1;
   let bestScore = -1;
-  const knownTerms = Object.values(IMPORT_SYNONYMS).flat();
 
-  matrix.slice(0, 25).forEach((row, index) => {
-    const normalized = row.map(normalizeText);
-    let score = normalized.reduce((total, cell) => (
-      total + (knownTerms.some(term => cell === term || cell.includes(term)) ? 1 : 0)
-    ), 0);
-    if (normalized.some(cell => cell.includes('codigo'))) score += 2;
-    if (normalized.some(cell => cell.includes('descricao'))) score += 2;
-    if (normalized.some(cell => cell.includes('qtde') || cell.includes('quantidade'))) score += 2;
+  matrix.slice(0, 30).forEach((row, index) => {
+    const normalized = row.map(normalizeText).filter(Boolean);
+    let score = normalized.reduce((total, cell) => total + (HEADER_TERMS.has(cell) ? 2 : 0), 0);
+    if (normalized.includes('codigo') || normalized.includes('codigo do vidro')) score += 4;
+    if (normalized.includes('descricao') || normalized.includes('descricao do vidro')) score += 4;
+    if (normalized.includes('qtde') || normalized.includes('qtde prev') || normalized.includes('quantidade')) score += 4;
+    if (normalized.includes('linha extraida do pdf')) score += 4;
+    if (normalized.includes('perfil')) score += 3;
+    if (normalized.includes('produto referencia')) score += 3;
+    if (normalized.length >= 3) score += 1;
+
     if (score > bestScore) {
       bestScore = score;
       bestIndex = index;
     }
   });
 
-  return bestIndex;
+  return bestScore > 0 ? bestIndex : -1;
 }
 
 function uniqueHeaders(row) {
@@ -160,46 +202,191 @@ function uniqueHeaders(row) {
   });
 }
 
-function suggestMapping(headers) {
-  const mapping = {};
-  headers.forEach((header, index) => {
-    const normalized = normalizeText(header);
-    Object.entries(IMPORT_SYNONYMS).some(([field, synonyms]) => {
-      if (mapping[field] !== undefined) return false;
-      if (synonyms.some(synonym => normalized === synonym || normalized.includes(synonym))) {
-        mapping[field] = index;
-        return true;
-      }
-      return false;
-    });
-  });
-  if (mapping.description === undefined && mapping.code !== undefined) mapping.description = mapping.code;
-  return mapping;
+function findHeader(headers, aliases, options = {}) {
+  const normalized = headers.map(normalizeText);
+
+  for (const alias of aliases) {
+    const exactIndex = normalized.findIndex(header => header === alias);
+    if (exactIndex >= 0) return exactIndex;
+  }
+
+  if (options.startsWith !== false) {
+    for (const alias of aliases.filter(value => value.length >= 3)) {
+      const startsIndex = normalized.findIndex(header => header.startsWith(alias));
+      if (startsIndex >= 0) return startsIndex;
+    }
+  }
+
+  return undefined;
+}
+
+function buildMapping(headers) {
+  return {
+    code: findHeader(headers, ['codigo do vidro', 'codigo', 'cod']),
+    description: findHeader(headers, [
+      'descricao do vidro', 'descricao', 'linha extraida do pdf', 'produto referencia', 'produto', 'perfil'
+    ]),
+    type: findHeader(headers, ['tipo', 'tipologia']),
+    quantity: findHeader(headers, ['qtde prev', 'qtde', 'quantidade', 'qtd', 'qtde total', 'qtde barras']),
+    unit: findHeader(headers, ['unidade', 'un'], { startsWith: false }),
+    unitValue: findHeader(headers, ['unit'], { startsWith: false }),
+    color: findHeader(headers, ['tratamento cor', 'cor', 'acabamento']),
+    width: findHeader(headers, ['largura', 'l'], { startsWith: false }),
+    height: findHeader(headers, ['altura', 'h', 'a'], { startsWith: false }),
+    length: findHeader(headers, ['comprimento', 'comp barra mm', 'medida']),
+    area: findHeader(headers, ['area m2', 'area', 'm2 compra', 'm2 corte']),
+    notes: findHeader(headers, ['observacoes', 'obs']),
+    itemNumber: findHeader(headers, ['item'], { startsWith: false }),
+    weight: findHeader(headers, ['peso kg', 'kg']),
+    cost: findHeader(headers, ['custo'])
+  };
+}
+
+function mappedIndexes(mapping) {
+  return new Set(Object.values(mapping).filter(index => Number.isInteger(index)));
+}
+
+function parseExtractedLine(sheetName, rawDescription, quantity) {
+  const normalizedSheet = normalizeText(sheetName);
+  const source = String(rawDescription || '').trim();
+
+  if (normalizedSheet.includes('persiana')) {
+    const match = source.match(/^([^\s]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+(RAL\s*[A-Z0-9.-]+)$/i);
+    if (match) {
+      return {
+        code: match[1],
+        description: `Persiana ${match[1]}`,
+        type: match[1],
+        quantity: quantity || num(match[4]),
+        color: match[5].replace(/\s+/g, ' ').trim(),
+        dimensions: `L ${match[2]} · A ${match[3]}`
+      };
+    }
+  }
+
+  const leadingCode = source.match(/^([A-Z0-9_./,-]{3,})\s+(.+)$/i);
+  if (leadingCode) {
+    return {
+      code: leadingCode[1],
+      description: leadingCode[2].trim(),
+      type: '',
+      quantity,
+      color: '',
+      dimensions: ''
+    };
+  }
+
+  return {
+    code: '',
+    description: source,
+    type: '',
+    quantity,
+    color: '',
+    dimensions: ''
+  };
 }
 
 function normalizeSheetRows(workbook, sheetName, defaultSource, defaultPainting) {
   const sheet = workbook.Sheets[sheetName];
   const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
-  if (!matrix.length) return [];
+  if (!matrix.length) return { rows: [], ignored: 0, headerRow: -1 };
 
   const headerRow = detectHeaderRow(matrix);
-  const headers = uniqueHeaders(matrix[headerRow] || []);
-  const mapping = suggestMapping(headers);
-  const mappedIndexes = new Set(Object.values(mapping).map(Number));
+  if (headerRow < 0) return { rows: [], ignored: matrix.length, headerRow: -1 };
 
-  return matrix.slice(headerRow + 1).map((row, rowIndex) => {
-    const getField = field => mapping[field] === undefined ? '' : row[mapping[field]];
-    const code = String(getField('code') || '').trim();
-    const description = String(getField('description') || code || '').trim();
-    const quantity = num(getField('quantity')) || 1;
+  const headers = uniqueHeaders(matrix[headerRow] || []);
+  const mapping = buildMapping(headers);
+  const usedIndexes = mappedIndexes(mapping);
+  const rows = [];
+  let ignored = 0;
+
+  for (let matrixIndex = headerRow + 1; matrixIndex < matrix.length; matrixIndex += 1) {
+    const row = matrix[matrixIndex];
+    if (isStopRow(row)) break;
+    if (isNoiseRow(row)) {
+      ignored += 1;
+      continue;
+    }
+
+    const getField = field => {
+      const index = mapping[field];
+      return Number.isInteger(index) ? row[index] : '';
+    };
+
+    const rawQuantity = getField('quantity');
+    let quantity = num(rawQuantity);
+    let quantityFromUnitValue = false;
+    const unitValue = num(getField('unitValue'));
+
+    if (quantity <= 0 && (rawQuantity === '' || rawQuantity === null || rawQuantity === undefined) && unitValue > 0) {
+      quantity = unitValue;
+      quantityFromUnitValue = true;
+    }
+
+    if (quantity <= 0) {
+      ignored += 1;
+      continue;
+    }
+
+    const descriptionHeader = Number.isInteger(mapping.description) ? normalizeText(headers[mapping.description]) : '';
+    let code = String(getField('code') || '').trim();
+    let description = String(getField('description') || '').trim();
+    let type = String(getField('type') || '').trim();
+    let color = String(getField('color') || '').trim();
+    let dimensions = '';
+
+    if (descriptionHeader === 'linha extraida do pdf') {
+      const parsed = parseExtractedLine(sheetName, description, quantity);
+      code = code || parsed.code;
+      description = parsed.description || description;
+      type = type || parsed.type;
+      color = color || parsed.color;
+      quantity = parsed.quantity || quantity;
+      dimensions = parsed.dimensions;
+    } else {
+      if (!description && code) description = code;
+      if (!code && description) {
+        const leadingCode = description.match(/^([A-Z0-9_./,-]{3,})(?:\s+|$)/i);
+        if (leadingCode) code = leadingCode[1];
+      }
+    }
+
+    if (!code && !description) {
+      ignored += 1;
+      continue;
+    }
+    if (isSeparator(code || description)) {
+      ignored += 1;
+      continue;
+    }
+
+    const normalizedIdentity = normalizeText(`${code} ${description}`);
+    if (!normalizedIdentity || NOISE_PATTERNS.some(pattern => pattern.test(normalizedIdentity))) {
+      ignored += 1;
+      continue;
+    }
+
+    let unit = String(getField('unit') || '').trim();
+    if (!unit) unit = quantityFromUnitValue ? 'm' : 'un';
+
     const width = getField('width');
     const height = getField('height');
-    const length = getField('length');
+    let length = getField('length');
     const area = getField('area');
-    const sourceDetails = {};
+    if (!length && !quantityFromUnitValue && Number.isInteger(mapping.unitValue)) length = getField('unitValue');
 
+    if (!dimensions) {
+      dimensions = [
+        width !== '' && width !== null ? `L ${width}` : '',
+        height !== '' && height !== null ? `A ${height}` : '',
+        length !== '' && length !== null ? `C ${length}` : '',
+        area !== '' && area !== null ? `${area} m²` : ''
+      ].filter(Boolean).join(' · ');
+    }
+
+    const sourceDetails = {};
     row.forEach((value, index) => {
-      if (mappedIndexes.has(index) || value === '' || value === null || !headers[index]) return;
+      if (usedIndexes.has(index) || value === '' || value === null || value === undefined || !headers[index]) return;
       const base = safeFirebaseKey(headers[index], `Coluna_${index + 1}`);
       let key = base;
       let suffix = 2;
@@ -207,33 +394,30 @@ function normalizeSheetRows(workbook, sheetName, defaultSource, defaultPainting)
       sourceDetails[key] = value;
     });
 
-    return {
+    if (Number.isInteger(mapping.itemNumber)) sourceDetails.itemOriginal = getField('itemNumber');
+    if (Number.isInteger(mapping.weight)) sourceDetails.pesoKg = getField('weight');
+    if (Number.isInteger(mapping.cost)) sourceDetails.custo = getField('cost');
+    if (quantityFromUnitValue) sourceDetails.quantidadeOriginalEmUnit = getField('unitValue');
+
+    rows.push({
       code,
       description,
-      type: String(getField('type') || '').trim(),
+      type,
       category: sheetName,
       qtyRequired: quantity,
-      unit: String(getField('unit') || 'un').trim() || 'un',
-      color: String(getField('color') || '').trim(),
-      dimensions: [
-        width ? `L ${width}` : '',
-        height ? `A ${height}` : '',
-        length ? `C ${length}` : '',
-        area ? `${area} m²` : ''
-      ].filter(Boolean).join(' · '),
+      unit,
+      color,
+      dimensions,
       notes: String(getField('notes') || '').trim(),
-      sourceDetails,
+      sourceDetails: safeFirebaseObject(sourceDetails),
       source: defaultSource,
       paintingRequired: defaultPainting,
       importSheet: sheetName,
-      importRow: headerRow + rowIndex + 2
-    };
-  }).filter(row => {
-    const text = normalizeText(`${row.code} ${row.description}`);
-    if (!row.code && !row.description) return false;
-    if (/resumo|observacoes gerais|total previsto|total quantidade|responsavel|orientacao|checklist de conferencia/.test(text)) return false;
-    return row.qtyRequired > 0;
-  });
+      importRow: matrixIndex + 1
+    });
+  }
+
+  return { rows, ignored, headerRow };
 }
 
 function deriveStatus(material) {
@@ -304,12 +488,27 @@ async function recalculateSummary(projectId) {
   await set(ref(db, `projectSummaries/${projectId}`), summary);
 }
 
+function clearImportState() {
+  importState.fileName = '';
+  importState.rows = [];
+  importState.sheetNames = [];
+  importState.sheetStats = [];
+  importState.ignoredRows = 0;
+  importState.processing = false;
+}
+
 function setProcessing(processing) {
   importState.processing = processing;
   const button = $('#xlsxFixedImportBtn');
   if (!button) return;
   button.disabled = processing;
   button.textContent = processing ? 'Importando...' : `Importar ${importState.rows.length} item(ns)`;
+}
+
+function renderSheetStats() {
+  return importState.sheetStats.map(stat => (
+    `<span class="status-pill status-neutral" style="margin:3px 6px 3px 0">${escapeHtml(stat.name)}: <strong>${stat.count}</strong></span>`
+  )).join('');
 }
 
 function renderPreview() {
@@ -326,15 +525,18 @@ function renderPreview() {
 
   preview.innerHTML = `
     <div class="import-note" style="margin-bottom:14px">
-      <strong>${importState.sheetNames.length} aba(s) encontrada(s).</strong>
-      Cada aba está sendo usada como uma categoria separada.
+      <strong>${importState.rows.length} itens válidos em ${importState.sheetNames.length} abas.</strong>
+      Títulos, resumos, totais, assinaturas e linhas sem quantidade foram descartados.
+      ${importState.ignoredRows ? `<span style="display:block;margin-top:5px">Linhas descartadas durante a leitura: ${importState.ignoredRows}.</span>` : ''}
+      <div style="margin-top:9px">${renderSheetStats()}</div>
     </div>
     <div class="table-wrap preview-table" style="margin-top:16px">
-      <table class="data-table" style="min-width:1240px">
-        <thead><tr><th>Categoria / aba</th><th>Código</th><th>Descrição</th><th>Tipo</th><th>Qtde</th><th>Un.</th><th>Cor</th><th>Medidas</th><th>Origem</th><th>Pintura</th></tr></thead>
+      <table class="data-table" style="min-width:1260px">
+        <thead><tr><th>Categoria / aba</th><th>Linha</th><th>Código</th><th>Descrição</th><th>Tipo</th><th>Qtde</th><th>Un.</th><th>Cor</th><th>Medidas</th><th>Origem</th><th>Pintura</th></tr></thead>
         <tbody>${importState.rows.map((row, index) => `
           <tr>
             <td><strong>${escapeHtml(row.category)}</strong></td>
+            <td>${row.importRow}</td>
             <td>${escapeHtml(row.code)}</td>
             <td><span class="cell-main">${escapeHtml(row.description)}</span></td>
             <td>${escapeHtml(row.type)}</td>
@@ -363,9 +565,7 @@ function renderPreview() {
   }));
 
   $('#xlsxClearBtn')?.addEventListener('click', () => {
-    importState.fileName = '';
-    importState.rows = [];
-    importState.sheetNames = [];
+    clearImportState();
     location.reload();
   });
 
@@ -423,7 +623,7 @@ async function importRows() {
     const activity = push(ref(db, `activities/${projectId}`));
     await set(activity, {
       type: 'importacao',
-      message: `${importState.rows.length} item(ns) importado(s) de ${importState.fileName}, separados por aba`,
+      message: `${importState.rows.length} item(ns) importado(s) de ${importState.fileName}, separados e validados por aba`,
       materialId: '',
       userId: user.uid,
       userName: user.email || 'Usuário',
@@ -431,10 +631,8 @@ async function importRows() {
     });
     await recalculateSummary(projectId);
 
-    toast(`${importState.rows.length} item(ns) importado(s), com cada aba em sua categoria.`);
-    importState.fileName = '';
-    importState.rows = [];
-    importState.sheetNames = [];
+    toast(`${importState.rows.length} item(ns) importado(s), sem linhas de resumo ou assinatura.`);
+    clearImportState();
     location.hash = '#materiais';
     setTimeout(() => location.reload(), 600);
   } catch (error) {
@@ -450,7 +648,7 @@ async function handleXlsxFile(file) {
   if (!['xlsx', 'xls'].includes(extension)) return;
 
   const preview = $('#importPreviewArea');
-  if (preview) preview.innerHTML = '<p class="muted">Lendo todas as abas da planilha...</p>';
+  if (preview) preview.innerHTML = '<p class="muted">Analisando cabeçalho e itens de cada aba...</p>';
 
   try {
     const buffer = await file.arrayBuffer();
@@ -460,17 +658,22 @@ async function handleXlsxFile(file) {
 
     importState.fileName = file.name;
     importState.sheetNames = [...workbook.SheetNames];
-    importState.rows = workbook.SheetNames.flatMap(sheetName => (
-      normalizeSheetRows(workbook, sheetName, source, painting)
-    ));
+    importState.rows = [];
+    importState.sheetStats = [];
+    importState.ignoredRows = 0;
+
+    workbook.SheetNames.forEach(sheetName => {
+      const result = normalizeSheetRows(workbook, sheetName, source, painting);
+      importState.rows.push(...result.rows);
+      importState.sheetStats.push({ name: sheetName, count: result.rows.length });
+      importState.ignoredRows += result.ignored;
+    });
 
     if (!importState.rows.length) throw new Error('Nenhuma linha válida foi encontrada nas abas da planilha.');
     renderPreview();
   } catch (error) {
     console.error(error);
-    importState.fileName = '';
-    importState.rows = [];
-    importState.sheetNames = [];
+    clearImportState();
     toast(`Não foi possível ler a planilha: ${error.message}`, 'error');
     if (preview) preview.innerHTML = '<div class="import-note">Não foi possível montar a prévia da planilha.</div>';
   }
@@ -497,6 +700,12 @@ function bindGeneralControls() {
       importState.rows.forEach(row => { row.paintingRequired = event.target.checked; });
       renderPreview();
     }, true);
+  }
+
+  const reset = $('#resetImportBtn');
+  if (reset && !reset.dataset.xlsxFixBound) {
+    reset.dataset.xlsxFixBound = '1';
+    reset.addEventListener('click', () => clearImportState(), true);
   }
 }
 
