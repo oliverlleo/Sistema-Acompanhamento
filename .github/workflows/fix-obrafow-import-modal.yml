@@ -1,0 +1,192 @@
+name: Corrigir modal e importacao individual
+
+on:
+  push:
+    paths:
+      - .github/workflows/fix-obrafow-import-modal.yml
+
+permissions:
+  contents: write
+
+jobs:
+  corrigir:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Corrigir app.js
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('public/app.js')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              if old not in text:
+                  raise SystemExit(f'Trecho nao encontrado: {label}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+          '''function openModal({ title, subtitle = '', body = '', footer = '', small = false }) {
+            $('#modalRoot').innerHTML = `
+              <div class="modal-backdrop" data-close-modal="true">''',
+          '''function openModal({ title, subtitle = '', body = '', footer = '', small = false }) {
+            $('#modalRoot').innerHTML = `
+              <div class="modal-backdrop">''',
+          'backdrop do modal')
+
+          replace_once(
+          '''  backdrop.addEventListener('click', (e) => {
+              if (e.target.dataset.closeModal === 'true') closeModal();
+            });''',
+          '''  backdrop.addEventListener('click', (e) => {
+              if (e.target === backdrop) closeModal();
+            });''',
+          'fechamento do modal')
+
+          replace_once(
+          '''    matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: ''
+            },''',
+          '''    matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: '',
+              defaultSource: 'compra', defaultPainting: false
+            },''',
+          'estado inicial do importador')
+
+          replace_once(
+          '''function resetImporter() {
+            state.importer = { file: null, type: '', fileName: '', workbook: null, sheetNames: [], selectedSheet: '', matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: '' };
+          }''',
+          '''function resetImporter() {
+            state.importer = {
+              file: null, type: '', fileName: '', workbook: null, sheetNames: [], selectedSheet: '',
+              matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: '',
+              defaultSource: 'compra', defaultPainting: false
+            };
+          }''',
+          'reset do importador')
+
+          replace_once(
+          '''        <label class="field"><span>Origem padrão</span><select id="importSource"><option value="compra">Precisa comprar</option><option value="estoque">Já existe no estoque</option></select></label>
+                  <label class="check-row"><input id="importPainting" type="checkbox" /><span><strong>Marcar todos como “vai para pintura”</strong><small style="display:block;color:var(--muted);margin-top:3px">Opcional. Pode ser alterado item por item depois.</small></span></label>''',
+          '''        <label class="field"><span>Aplicar origem a todos</span><select id="importSource"><option value="compra" ${imp.defaultSource === 'compra' ? 'selected' : ''}>Precisa comprar</option><option value="estoque" ${imp.defaultSource === 'estoque' ? 'selected' : ''}>Já existe no estoque</option></select></label>
+                  <label class="check-row"><input id="importPainting" type="checkbox" ${imp.defaultPainting ? 'checked' : ''} /><span><strong>Aplicar pintura a todos</strong><small style="display:block;color:var(--muted);margin-top:3px">Depois você pode alterar cada item individualmente na tabela.</small></span></label>''',
+          'campos gerais do importador')
+
+          replace_once(
+          '''  $('#importProject').addEventListener('change', e => {
+              if (e.target.value) { state.currentProjectId = e.target.value; localStorage.setItem('obraflow.currentProject', e.target.value); updateProjectSelect(); listenProjectData(e.target.value); }
+            });
+            $('#resetImportBtn')?.addEventListener('click', () => { resetImporter(); renderImporter(); });
+            bindImportPreviewEvents();''',
+          '''  $('#importProject').addEventListener('change', e => {
+              if (e.target.value) { state.currentProjectId = e.target.value; localStorage.setItem('obraflow.currentProject', e.target.value); updateProjectSelect(); listenProjectData(e.target.value); }
+            });
+            $('#importSource').addEventListener('change', e => {
+              state.importer.defaultSource = e.target.value;
+              state.importer.rows.forEach(row => { row.source = e.target.value; });
+              $('#importPreviewArea').innerHTML = renderImportPreview();
+              bindImportPreviewEvents();
+            });
+            $('#importPainting').addEventListener('change', e => {
+              state.importer.defaultPainting = e.target.checked;
+              state.importer.rows.forEach(row => { row.paintingRequired = e.target.checked; });
+              $('#importPreviewArea').innerHTML = renderImportPreview();
+              bindImportPreviewEvents();
+            });
+            $('#resetImportBtn')?.addEventListener('click', () => { resetImporter(); renderImporter(); });
+            bindImportPreviewEvents();''',
+          'eventos gerais do importador')
+
+          replace_once(
+          '''function normalizedPreviewTable(rows) {
+            const preview = rows.slice(0, 30);
+            return `<div class="table-wrap preview-table" style="margin-top:16px"><table class="data-table" style="min-width:760px"><thead><tr><th>Código</th><th>Descrição</th><th>Tipo</th><th>Qtde</th><th>Un.</th><th>Cor</th><th>Medidas</th></tr></thead><tbody>${preview.map(r => `<tr><td>${escapeHtml(r.code || '')}</td><td><span class="cell-main">${escapeHtml(r.description || '')}</span></td><td>${escapeHtml(r.type || '')}</td><td>${fmtQty(r.qtyRequired)}</td><td>${escapeHtml(r.unit || 'un')}</td><td>${escapeHtml(r.color || '')}</td><td>${escapeHtml(r.dimensions || '')}</td></tr>`).join('')}</tbody></table></div>${rows.length > 30 ? `<p class="muted" style="font-size:10px">Mostrando 30 de ${rows.length} linhas.</p>` : ''}`;
+          }''',
+          '''function normalizedPreviewTable(rows) {
+            return `<div class="table-wrap preview-table" style="margin-top:16px"><table class="data-table" style="min-width:1080px"><thead><tr><th>Código</th><th>Descrição</th><th>Tipo</th><th>Qtde</th><th>Un.</th><th>Cor</th><th>Medidas</th><th>Origem</th><th>Pintura</th></tr></thead><tbody>${rows.map((r, index) => `<tr><td>${escapeHtml(r.code || '')}</td><td><span class="cell-main">${escapeHtml(r.description || '')}</span></td><td>${escapeHtml(r.type || '')}</td><td>${fmtQty(r.qtyRequired)}</td><td>${escapeHtml(r.unit || 'un')}</td><td>${escapeHtml(r.color || '')}</td><td>${escapeHtml(r.dimensions || '')}</td><td><select data-import-source="${index}" aria-label="Origem do item" style="min-width:150px"><option value="compra" ${(r.source || state.importer.defaultSource) === 'compra' ? 'selected' : ''}>Comprar</option><option value="estoque" ${(r.source || state.importer.defaultSource) === 'estoque' ? 'selected' : ''}>Estoque</option></select></td><td style="text-align:center"><input data-import-painting="${index}" type="checkbox" ${Boolean(r.paintingRequired ?? state.importer.defaultPainting) ? 'checked' : ''} aria-label="Vai para pintura" /></td></tr>`).join('')}</tbody></table></div>`;
+          }''',
+          'tabela individual do importador')
+
+          replace_once(
+          '''  $$('[data-map-field]').forEach(select => select.addEventListener('change', () => {
+              const mapping = {};
+              $$('[data-map-field]').forEach(s => { if (s.value !== '') mapping[s.dataset.mapField] = Number(s.value); });
+              state.importer.mapping = mapping;
+              state.importer.rows = normalizeMatrixRows();
+              $('#importPreviewArea').innerHTML = renderImportPreview();
+              bindImportPreviewEvents();
+            }));
+            $('#confirmImportBtn')?.addEventListener('click', confirmImport);''',
+          '''  $$('[data-map-field]').forEach(select => select.addEventListener('change', () => {
+              const mapping = {};
+              $$('[data-map-field]').forEach(s => { if (s.value !== '') mapping[s.dataset.mapField] = Number(s.value); });
+              state.importer.mapping = mapping;
+              state.importer.rows = normalizeMatrixRows();
+              $('#importPreviewArea').innerHTML = renderImportPreview();
+              bindImportPreviewEvents();
+            }));
+            $$('[data-import-source]').forEach(select => select.addEventListener('change', e => {
+              const row = state.importer.rows[Number(e.target.dataset.importSource)];
+              if (row) row.source = e.target.value;
+            }));
+            $$('[data-import-painting]').forEach(input => input.addEventListener('change', e => {
+              const row = state.importer.rows[Number(e.target.dataset.importPainting)];
+              if (row) row.paintingRequired = e.target.checked;
+            }));
+            $('#confirmImportBtn')?.addEventListener('click', confirmImport);''',
+          'eventos individuais do importador')
+
+          replace_once(
+          '''      notes: String(getField('notes') || '').trim(), sourceDetails: details,
+                importRow: imp.headerRow + rowIndex + 2''',
+          '''      notes: String(getField('notes') || '').trim(), sourceDetails: details,
+                source: imp.defaultSource || 'compra', paintingRequired: Boolean(imp.defaultPainting),
+                importRow: imp.headerRow + rowIndex + 2''',
+          'valores individuais da planilha')
+
+          replace_once(
+          '''      state.importer.rows = recognized.rows;
+                state.importer.parser = recognized.parser;''',
+          '''      state.importer.rows = recognized.rows.map(row => ({
+                  ...row,
+                  source: state.importer.defaultSource || 'compra',
+                  paintingRequired: Boolean(state.importer.defaultPainting)
+                }));
+                state.importer.parser = recognized.parser;''',
+          'valores individuais do PDF')
+
+          replace_once(
+          '''  const category = ($('#importCategory')?.value || state.importer.selectedSheet || '').trim();
+            const source = $('#importSource')?.value || 'compra';
+            const paintingRequired = Boolean($('#importPainting')?.checked);
+            const rows = state.importer.rows;''',
+          '''  const category = ($('#importCategory')?.value || state.importer.selectedSheet || '').trim();
+            const rows = state.importer.rows;''',
+          'confirmacao geral')
+
+          replace_once(
+          '''      ...row, id, projectId, category: category || row.category || 'Importado', source,
+                paintingRequired, qtyReceived: 0, stockReservedQty: 0, paintingSentQty: 0,''',
+          '''      ...row, id, projectId, category: category || row.category || 'Importado',
+                source: row.source || state.importer.defaultSource || 'compra',
+                paintingRequired: Boolean(row.paintingRequired),
+                qtyReceived: 0, stockReservedQty: 0, paintingSentQty: 0,''',
+          'salvamento individual')
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Validar JavaScript
+        run: node --check public/app.js
+
+      - name: Salvar correcoes
+        shell: bash
+        run: |
+          git config user.name "ObraFlow Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add public/app.js
+          git commit -m "Corrige modal e configuracao individual da importacao" || exit 0
+          git push
