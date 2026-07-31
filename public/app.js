@@ -97,7 +97,8 @@ const state = {
   filters: { search: '', status: 'todos', category: 'todas' },
   importer: {
     file: null, type: '', fileName: '', workbook: null, sheetNames: [], selectedSheet: '',
-    matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: ''
+    matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: '',
+    defaultSource: 'compra', defaultPainting: false
   },
   unsubs: { projects: null, summaries: null, materials: null, activities: null, inventory: null, users: null }
 };
@@ -192,7 +193,7 @@ function setBusy(button, busy, label = 'Salvando...') {
 
 function openModal({ title, subtitle = '', body = '', footer = '', small = false }) {
   $('#modalRoot').innerHTML = `
-    <div class="modal-backdrop" data-close-modal="true">
+    <div class="modal-backdrop">
       <section class="modal ${small ? 'modal-sm' : ''}" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
         <header class="modal-head">
           <div><h2>${escapeHtml(title)}</h2>${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ''}</div>
@@ -204,7 +205,7 @@ function openModal({ title, subtitle = '', body = '', footer = '', small = false
     </div>`;
   const backdrop = $('.modal-backdrop');
   backdrop.addEventListener('click', (e) => {
-    if (e.target.dataset.closeModal === 'true') closeModal();
+    if (e.target === backdrop) closeModal();
   });
 }
 function closeModal() { $('#modalRoot').innerHTML = ''; }
@@ -1008,7 +1009,11 @@ const IMPORT_SYNONYMS = {
 };
 
 function resetImporter() {
-  state.importer = { file: null, type: '', fileName: '', workbook: null, sheetNames: [], selectedSheet: '', matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: '' };
+  state.importer = {
+    file: null, type: '', fileName: '', workbook: null, sheetNames: [], selectedSheet: '',
+    matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: '',
+    defaultSource: 'compra', defaultPainting: false
+  };
 }
 
 function renderImporter() {
@@ -1023,8 +1028,8 @@ function renderImporter() {
         ${imp.fileName ? `<div class="file-badge"><span>${escapeHtml(imp.fileName)}</span><span>${escapeHtml(imp.type.toUpperCase())}</span></div>` : ''}
         <label class="field"><span>Obra de destino *</span><select id="importProject">${projectOptions(true)}</select></label>
         <label class="field"><span>Categoria padrão</span><input id="importCategory" value="${escapeHtml(imp.selectedSheet || '')}" placeholder="Ex.: Perfis, Ferragens, Vidros" /></label>
-        <label class="field"><span>Origem padrão</span><select id="importSource"><option value="compra">Precisa comprar</option><option value="estoque">Já existe no estoque</option></select></label>
-        <label class="check-row"><input id="importPainting" type="checkbox" /><span><strong>Marcar todos como “vai para pintura”</strong><small style="display:block;color:var(--muted);margin-top:3px">Opcional. Pode ser alterado item por item depois.</small></span></label>
+        <label class="field"><span>Aplicar origem a todos</span><select id="importSource"><option value="compra" ${imp.defaultSource === 'compra' ? 'selected' : ''}>Precisa comprar</option><option value="estoque" ${imp.defaultSource === 'estoque' ? 'selected' : ''}>Já existe no estoque</option></select></label>
+        <label class="check-row"><input id="importPainting" type="checkbox" ${imp.defaultPainting ? 'checked' : ''} /><span><strong>Aplicar pintura a todos</strong><small style="display:block;color:var(--muted);margin-top:3px">Depois você pode alterar cada item individualmente na tabela.</small></span></label>
         <div class="import-note">O importador preserva colunas não mapeadas no campo “detalhes de origem”. Linhas vazias, títulos e resumos são ignorados.</div>
       </div></div>
       <div class="card"><div class="card-head"><h3>2. Conferência e mapeamento</h3>${imp.rows.length ? `<span class="status-pill status-info">${imp.rows.length} linha(s)</span>` : ''}</div><div class="card-body" id="importPreviewArea">${renderImportPreview()}</div></div>
@@ -1039,6 +1044,18 @@ function renderImporter() {
   $('#importProject').value = state.currentProjectId || '';
   $('#importProject').addEventListener('change', e => {
     if (e.target.value) { state.currentProjectId = e.target.value; localStorage.setItem('obraflow.currentProject', e.target.value); updateProjectSelect(); listenProjectData(e.target.value); }
+  });
+  $('#importSource').addEventListener('change', e => {
+    state.importer.defaultSource = e.target.value;
+    state.importer.rows.forEach(row => { row.source = e.target.value; });
+    $('#importPreviewArea').innerHTML = renderImportPreview();
+    bindImportPreviewEvents();
+  });
+  $('#importPainting').addEventListener('change', e => {
+    state.importer.defaultPainting = e.target.checked;
+    state.importer.rows.forEach(row => { row.paintingRequired = e.target.checked; });
+    $('#importPreviewArea').innerHTML = renderImportPreview();
+    bindImportPreviewEvents();
   });
   $('#resetImportBtn')?.addEventListener('click', () => { resetImporter(); renderImporter(); });
   bindImportPreviewEvents();
@@ -1063,8 +1080,7 @@ function renderImportPreview() {
 }
 
 function normalizedPreviewTable(rows) {
-  const preview = rows.slice(0, 30);
-  return `<div class="table-wrap preview-table" style="margin-top:16px"><table class="data-table" style="min-width:760px"><thead><tr><th>Código</th><th>Descrição</th><th>Tipo</th><th>Qtde</th><th>Un.</th><th>Cor</th><th>Medidas</th></tr></thead><tbody>${preview.map(r => `<tr><td>${escapeHtml(r.code || '')}</td><td><span class="cell-main">${escapeHtml(r.description || '')}</span></td><td>${escapeHtml(r.type || '')}</td><td>${fmtQty(r.qtyRequired)}</td><td>${escapeHtml(r.unit || 'un')}</td><td>${escapeHtml(r.color || '')}</td><td>${escapeHtml(r.dimensions || '')}</td></tr>`).join('')}</tbody></table></div>${rows.length > 30 ? `<p class="muted" style="font-size:10px">Mostrando 30 de ${rows.length} linhas.</p>` : ''}`;
+  return `<div class="table-wrap preview-table" style="margin-top:16px"><table class="data-table" style="min-width:1080px"><thead><tr><th>Código</th><th>Descrição</th><th>Tipo</th><th>Qtde</th><th>Un.</th><th>Cor</th><th>Medidas</th><th>Origem</th><th>Pintura</th></tr></thead><tbody>${rows.map((r, index) => `<tr><td>${escapeHtml(r.code || '')}</td><td><span class="cell-main">${escapeHtml(r.description || '')}</span></td><td>${escapeHtml(r.type || '')}</td><td>${fmtQty(r.qtyRequired)}</td><td>${escapeHtml(r.unit || 'un')}</td><td>${escapeHtml(r.color || '')}</td><td>${escapeHtml(r.dimensions || '')}</td><td><select data-import-source="${index}" aria-label="Origem do item" style="min-width:150px"><option value="compra" ${(r.source || state.importer.defaultSource) === 'compra' ? 'selected' : ''}>Comprar</option><option value="estoque" ${(r.source || state.importer.defaultSource) === 'estoque' ? 'selected' : ''}>Estoque</option></select></td><td style="text-align:center"><input data-import-painting="${index}" type="checkbox" ${Boolean(r.paintingRequired ?? state.importer.defaultPainting) ? 'checked' : ''} aria-label="Vai para pintura" /></td></tr>`).join('')}</tbody></table></div>`;
 }
 
 function bindImportPreviewEvents() {
@@ -1076,6 +1092,14 @@ function bindImportPreviewEvents() {
     state.importer.rows = normalizeMatrixRows();
     $('#importPreviewArea').innerHTML = renderImportPreview();
     bindImportPreviewEvents();
+  }));
+  $$('[data-import-source]').forEach(select => select.addEventListener('change', e => {
+    const row = state.importer.rows[Number(e.target.dataset.importSource)];
+    if (row) row.source = e.target.value;
+  }));
+  $$('[data-import-painting]').forEach(input => input.addEventListener('change', e => {
+    const row = state.importer.rows[Number(e.target.dataset.importPainting)];
+    if (row) row.paintingRequired = e.target.checked;
   }));
   $('#confirmImportBtn')?.addEventListener('click', confirmImport);
 }
@@ -1096,7 +1120,11 @@ async function handleImportFile(file) {
       const lines = await extractPdfLines(file);
       state.importer.rawPdfLines = lines;
       const recognized = parseKnownPdf(lines);
-      state.importer.rows = recognized.rows;
+      state.importer.rows = recognized.rows.map(row => ({
+        ...row,
+        source: state.importer.defaultSource || 'compra',
+        paintingRequired: Boolean(state.importer.defaultPainting)
+      }));
       state.importer.parser = recognized.parser;
       renderImporter();
     } else throw new Error('Formato não suportado.');
@@ -1170,6 +1198,7 @@ function normalizeMatrixRows() {
       color: String(getField('color') || '').trim(),
       dimensions: [width ? `L ${width}` : '', height ? `A ${height}` : '', length ? `C ${length}` : '', area ? `${area} m²` : ''].filter(Boolean).join(' · '),
       notes: String(getField('notes') || '').trim(), sourceDetails: details,
+      source: imp.defaultSource || 'compra', paintingRequired: Boolean(imp.defaultPainting),
       importRow: imp.headerRow + rowIndex + 2
     };
   }).filter(row => {
@@ -1262,8 +1291,6 @@ async function confirmImport() {
   const projectId = $('#importProject')?.value || state.currentProjectId;
   if (!projectId || !state.projects[projectId]) { toast('Selecione a obra de destino.', 'error'); return; }
   const category = ($('#importCategory')?.value || state.importer.selectedSheet || '').trim();
-  const source = $('#importSource')?.value || 'compra';
-  const paintingRequired = Boolean($('#importPainting')?.checked);
   const rows = state.importer.rows;
   if (!rows.length) { toast('Nenhuma linha válida para importar.', 'error'); return; }
   const button = $('#confirmImportBtn'); setBusy(button, true, 'Importando...');
@@ -1271,8 +1298,10 @@ async function confirmImport() {
   rows.forEach(row => {
     const id = push(ref(db, `materials/${projectId}`)).key;
     const payload = {
-      ...row, id, projectId, category: category || row.category || 'Importado', source,
-      paintingRequired, qtyReceived: 0, stockReservedQty: 0, paintingSentQty: 0,
+      ...row, id, projectId, category: category || row.category || 'Importado',
+      source: row.source || state.importer.defaultSource || 'compra',
+      paintingRequired: Boolean(row.paintingRequired),
+      qtyReceived: 0, stockReservedQty: 0, paintingSentQty: 0,
       paintingReturnedQty: 0, separatedQty: 0, siteDeliveredQty: 0,
       importSource: state.importer.fileName, importType: state.importer.type,
       createdAt: now(), createdBy: state.user.uid, updatedAt: now(), updatedBy: state.user.uid
