@@ -1,0 +1,52 @@
+{
+  "rules": {
+    ".read": "auth != null && root.child('users').child(auth.uid).child('active').val() === true",
+    ".write": false,
+
+    "users": {
+      "$uid": {
+        ".write": "auth != null && (($uid === auth.uid && !data.exists() && newData.child('role').val() === 'operador' && newData.child('active').val() === true) || root.child('users').child(auth.uid).child('role').val() === 'gerente')",
+        ".validate": "newData.hasChildren(['name', 'email', 'role', 'active']) && (newData.child('role').val() === 'gerente' || newData.child('role').val() === 'compras' || newData.child('role').val() === 'almoxarifado' || newData.child('role').val() === 'producao' || newData.child('role').val() === 'operador')"
+      }
+    },
+
+    "projects": {
+      "$projectId": {
+        ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() === true && (root.child('users').child(auth.uid).child('role').val() === 'gerente' || root.child('users').child(auth.uid).child('role').val() === 'compras') && (newData.exists() || root.child('users').child(auth.uid).child('role').val() === 'gerente')",
+        ".validate": "!newData.exists() || newData.hasChildren(['id', 'code', 'name', 'status'])"
+      }
+    },
+
+    "materials": {
+      "$projectId": {
+        "$materialId": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() === true && (newData.exists() || root.child('users').child(auth.uid).child('role').val() === 'gerente')",
+          ".validate": "!newData.exists() || (newData.child('id').val() === $materialId && newData.child('projectId').val() === $projectId && newData.hasChildren(['description', 'qtyRequired', 'unit', 'source', 'status']))"
+        }
+      }
+    },
+
+    "projectSummaries": {
+      "$projectId": {
+        ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() === true",
+        ".validate": "!newData.exists() || newData.hasChildren(['total', 'pending', 'progress'])"
+      }
+    },
+
+    "activities": {
+      "$projectId": {
+        "$activityId": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() === true && ((!data.exists() && newData.exists()) || root.child('users').child(auth.uid).child('role').val() === 'gerente')",
+          ".validate": "!newData.exists() || newData.hasChildren(['type', 'message', 'userId', 'createdAt'])"
+        }
+      }
+    },
+
+    "inventory": {
+      "$itemId": {
+        ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() === true && (root.child('users').child(auth.uid).child('role').val() === 'gerente' || root.child('users').child(auth.uid).child('role').val() === 'almoxarifado') && (newData.exists() || root.child('users').child(auth.uid).child('role').val() === 'gerente')",
+        ".validate": "!newData.exists() || newData.hasChildren(['id', 'description', 'qtyAvailable', 'unit'])"
+      }
+    }
+  }
+}

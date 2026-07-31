@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0f766e" />
+  <meta name="description" content="Controle de materiais, compras, estoque, pintura, recebimento e separação por obra." />
+  <title>ObraFlow | Materiais e Compras</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="offlineBanner" class="offline-banner" hidden>Sem conexão. Alterações serão enviadas quando a internet voltar.</div>
+
+  <section id="authScreen" class="auth-screen">
+    <div class="auth-art">
+      <div class="brand brand-light">
+        <span class="brand-mark">OF</span>
+        <span><strong>ObraFlow</strong><small>Materiais e Compras</small></span>
+      </div>
+      <div class="auth-copy">
+        <span class="eyebrow">CONTROLE DE PONTA A PONTA</span>
+        <h1>Nada fica para trás na obra.</h1>
+        <p>Compra, estoque, chegada, pintura, separação e envio para a obra em um único fluxo.</p>
+        <div class="auth-flow">
+          <span>Comprar</span><i>→</i><span>Receber</span><i>→</i><span>Pintar</span><i>→</i><span>Separar</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="auth-panel">
+      <form id="loginForm" class="auth-card">
+        <div>
+          <span class="eyebrow">ACESSO À EQUIPE</span>
+          <h2>Entrar no sistema</h2>
+          <p class="muted">Use seu e-mail e senha cadastrados no Firebase Authentication.</p>
+        </div>
+        <label>E-mail<input id="loginEmail" type="email" autocomplete="email" required placeholder="nome@empresa.com.br" /></label>
+        <label>Senha<input id="loginPassword" type="password" autocomplete="current-password" required minlength="6" placeholder="••••••••" /></label>
+        <button class="btn btn-primary btn-block" type="submit">Entrar</button>
+        <button id="showSignupBtn" class="btn btn-ghost btn-block" type="button">Criar primeiro acesso</button>
+        <p id="authMessage" class="form-message" aria-live="polite"></p>
+      </form>
+
+      <form id="signupForm" class="auth-card" hidden>
+        <div>
+          <span class="eyebrow">NOVO USUÁRIO</span>
+          <h2>Criar primeiro acesso</h2>
+          <p class="muted">Novos cadastros entram como operador. A gerente pode alterar o perfil depois.</p>
+        </div>
+        <label>Nome<input id="signupName" type="text" required placeholder="Nome completo" /></label>
+        <label>E-mail<input id="signupEmail" type="email" required placeholder="nome@empresa.com.br" /></label>
+        <label>Senha<input id="signupPassword" type="password" required minlength="6" placeholder="Mínimo de 6 caracteres" /></label>
+        <button class="btn btn-primary btn-block" type="submit">Criar acesso</button>
+        <button id="showLoginBtn" class="btn btn-ghost btn-block" type="button">Voltar para entrar</button>
+        <p id="signupMessage" class="form-message" aria-live="polite"></p>
+      </form>
+    </div>
+  </section>
+
+  <div id="appShell" class="app-shell" hidden>
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-head">
+        <div class="brand brand-light">
+          <span class="brand-mark">OF</span>
+          <span><strong>ObraFlow</strong><small>Materiais e Compras</small></span>
+        </div>
+        <button id="closeSidebarBtn" class="icon-btn sidebar-close" aria-label="Fechar menu">×</button>
+      </div>
+
+      <nav id="mainNav" class="main-nav" aria-label="Navegação principal">
+        <button data-route="dashboard" class="nav-item active"><span>▦</span>Visão geral</button>
+        <button data-route="obras" class="nav-item"><span>▣</span>Obras</button>
+        <button data-route="materiais" class="nav-item"><span>≡</span>Materiais</button>
+        <div class="nav-label">FLUXO OPERACIONAL</div>
+        <button data-route="compras" class="nav-item"><span>◎</span>Compras</button>
+        <button data-route="recebimento" class="nav-item"><span>↓</span>Recebimento</button>
+        <button data-route="pintura" class="nav-item"><span>◒</span>Pintura</button>
+        <button data-route="separacao" class="nav-item"><span>✓</span>Separação</button>
+        <button data-route="estoque" class="nav-item"><span>▤</span>Estoque</button>
+        <div class="nav-label">FERRAMENTAS</div>
+        <button data-route="importar" class="nav-item"><span>⇧</span>Importar arquivos</button>
+        <button data-route="usuarios" class="nav-item manager-only"><span>♙</span>Usuários</button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div id="sidebarUser" class="user-chip"></div>
+        <button id="logoutBtn" class="btn btn-dark btn-block">Sair</button>
+      </div>
+    </aside>
+
+    <div id="sidebarBackdrop" class="sidebar-backdrop" hidden></div>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="openSidebarBtn" class="icon-btn menu-btn" aria-label="Abrir menu">☰</button>
+          <div>
+            <h1 id="pageTitle">Visão geral</h1>
+            <p id="pageSubtitle">Acompanhamento completo das obras</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <label class="project-select-wrap">
+            <span>Obra ativa</span>
+            <select id="globalProjectSelect"></select>
+          </label>
+          <button id="quickAddBtn" class="btn btn-primary">+ Material</button>
+        </div>
+      </header>
+
+      <main id="view" class="view" tabindex="-1"></main>
+    </div>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toastHost" class="toast-host" aria-live="polite"></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
