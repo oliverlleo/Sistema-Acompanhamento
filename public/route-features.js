@@ -4,7 +4,8 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const loaded = {
   importar: false,
   compras: false,
-  medidas: false
+  medidas: false,
+  filaCompras: false
 };
 
 function currentRoute() {
@@ -56,6 +57,17 @@ async function loadMeasuresFeature() {
   }
 }
 
+async function loadPurchaseQueueFilter() {
+  if (loaded.filaCompras) return;
+  loaded.filaCompras = true;
+  try {
+    await import('./purchase-queue-filter.js?v=20260731-1453');
+  } catch (error) {
+    loaded.filaCompras = false;
+    console.error('Falha ao corrigir a fila de compras:', error);
+  }
+}
+
 async function loadRouteFeature() {
   const route = currentRoute();
 
@@ -75,6 +87,10 @@ async function loadRouteFeature() {
 
   if (route === 'compras' || route === 'recebimento') {
     await loadMeasuresFeature();
+  }
+
+  if (route === 'compras') {
+    await loadPurchaseQueueFilter();
   }
 
   if (route === 'compras' && !loaded.compras) {
