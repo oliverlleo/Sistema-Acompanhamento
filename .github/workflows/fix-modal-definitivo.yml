@@ -1,0 +1,55 @@
+name: Corrigir modal definitivamente
+
+on:
+  push:
+    paths:
+      - .github/workflows/fix-modal-definitivo.yml
+
+permissions:
+  contents: write
+
+jobs:
+  corrigir:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Remover fechamento pelo fundo e atualizar cache
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          app = Path('public/app.js')
+          text = app.read_text(encoding='utf-8')
+
+          old = """  const backdrop = $('.modal-backdrop');
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) closeModal();
+  });"""
+          new = """  const modal = $('.modal', $('#modalRoot'));
+  modal?.addEventListener('click', (event) => event.stopPropagation());"""
+
+          if old not in text:
+              raise SystemExit('Trecho atual do modal nao foi encontrado.')
+
+          text = text.replace(old, new, 1)
+          app.write_text(text, encoding='utf-8')
+
+          index = Path('public/index.html')
+          html = index.read_text(encoding='utf-8')
+          html = html.replace('<script type="module" src="./app.js"></script>', '<script type="module" src="./app.js?v=20260731-1058"></script>')
+          index.write_text(html, encoding='utf-8')
+          PY
+
+      - name: Validar JavaScript
+        run: node --check public/app.js
+
+      - name: Salvar correção
+        shell: bash
+        run: |
+          git config user.name "ObraFlow Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add public/app.js public/index.html
+          git commit -m "Impede o modal de fechar ao clicar nos campos" || exit 0
+          git push
