@@ -443,7 +443,7 @@ function deriveStatus(material) {
 
   if (required > 0 && available >= required) return material.paintingRequired ? 'aguarda_pintura' : 'pronto_separar';
   if (available > 0) return 'recebido_parcial';
-  if (material.source === 'estoque') return 'reservar_estoque';
+  if (material.source === 'estoque') return 'pronto_separar';
   if (!material.purchaseDate && !material.orderNumber) return 'comprar';
   return isPast(material.deliveryEta) ? 'compra_atrasada' : 'aguardando_entrega';
 }
