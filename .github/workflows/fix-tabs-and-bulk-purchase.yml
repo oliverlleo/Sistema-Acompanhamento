@@ -1,0 +1,325 @@
+name: Corrigir abas e compra em lote
+
+on:
+  push:
+    paths:
+      - .github/workflows/fix-tabs-and-bulk-purchase.yml
+
+permissions:
+  contents: write
+
+jobs:
+  corrigir:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Aplicar correções
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('public/app.js')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              if old not in text:
+                  raise SystemExit(f'Trecho não encontrado: {label}')
+              text = text.replace(old, new, 1)
+
+          # Estado do importador: guarda contexto de todas as abas e substituição opcional de categoria.
+          replace_once(
+          """    matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: '',
+    defaultSource: 'compra', defaultPainting: false""",
+          """    matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: '',
+    defaultSource: 'compra', defaultPainting: false, categoryOverride: '', sheetContexts: {}""",
+          'estado inicial do importador')
+
+          replace_once(
+          """    matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: '',
+    defaultSource: 'compra', defaultPainting: false
+  };""",
+          """    matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: '',
+    defaultSource: 'compra', defaultPainting: false, categoryOverride: '', sheetContexts: {}
+  };""",
+          'reset do importador')
+
+          # Categoria não deve sobrescrever nomes das abas por padrão.
+          replace_once(
+          """        <label class=\"field\"><span>Categoria padrão</span><input id=\"importCategory\" value=\"${escapeHtml(imp.selectedSheet || '')}\" placeholder=\"Ex.: Perfis, Ferragens, Vidros\" /></label>""",
+          """        <label class=\"field\"><span>Substituir categoria de todos (opcional)</span><input id=\"importCategory\" value=\"${escapeHtml(imp.categoryOverride || '')}\" placeholder=\"Deixe vazio para usar o nome de cada aba\" /></label>""",
+          'campo de categoria')
+
+          replace_once(
+          """  $('#importSource').addEventListener('change', e => {""",
+          """  $('#importCategory').addEventListener('input', e => { state.importer.categoryOverride = e.target.value; });
+  $('#importSource').addEventListener('change', e => {""",
+          'evento da categoria')
+
+          # Interface: opção Todas as abas e mapeamento automático por aba.
+          old_preview = """  if (imp.type === 'xlsx' && imp.workbook) {
+    return `${imp.sheetNames.length > 1 ? `<label class=\"field\" style=\"max-width:340px;margin-bottom:14px\"><span>Aba da planilha</span><select id=\"sheetSelect\">${imp.sheetNames.map(name => `<option value=\"${escapeHtml(name)}\" ${name === imp.selectedSheet ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>` : ''}
+      <div class=\"section-title\" style=\"margin:0 0 10px\">Mapeamento das colunas</div>
+      <div class=\"mapping-grid\">${IMPORT_FIELDS.map(([key, label]) => `<label class=\"field\"><span>${escapeHtml(label)}</span><select data-map-field=\"${key}\"><option value=\"\">Não importar</option>${imp.headers.map((h, idx) => `<option value=\"${idx}\" ${String(imp.mapping[key]) === String(idx) ? 'selected' : ''}>${escapeHtml(h)}</option>`).join('')}</select></label>`).join('')}</div>
+      ${normalizedPreviewTable(imp.rows)}
+      <div style=\"display:flex;justify-content:flex-end;margin-top:16px\"><button id=\"confirmImportBtn\" class=\"btn btn-primary\" ${imp.rows.length ? '' : 'disabled'}>Importar ${imp.rows.length} item(ns)</button></div>`;
+  }"""
+          new_preview = """  if (imp.type === 'xlsx' && imp.workbook) {
+    const allSheets = imp.selectedSheet === '__all__';
+    return `${imp.sheetNames.length > 1 ? `<label class=\"field\" style=\"max-width:420px;margin-bottom:14px\"><span>Abas da planilha</span><select id=\"sheetSelect\"><option value=\"__all__\" ${allSheets ? 'selected' : ''}>Todas as abas — cada aba vira uma categoria</option>${imp.sheetNames.map(name => `<option value=\"${escapeHtml(name)}\" ${name === imp.selectedSheet ? 'selected' : ''}>Somente: ${escapeHtml(name)}</option>`).join('')}</select></label>` : ''}
+      ${allSheets ? `<div class=\"import-note\" style=\"margin-bottom:14px\"><strong>${imp.sheetNames.length} abas encontradas.</strong> Cada aba será importada separadamente usando o nome da aba como categoria.</div>` : `<div class=\"section-title\" style=\"margin:0 0 10px\">Mapeamento das colunas</div><div class=\"mapping-grid\">${IMPORT_FIELDS.map(([key, label]) => `<label class=\"field\"><span>${escapeHtml(label)}</span><select data-map-field=\"${key}\"><option value=\"\">Não importar</option>${imp.headers.map((h, idx) => `<option value=\"${idx}\" ${String(imp.mapping[key]) === String(idx) ? 'selected' : ''}>${escapeHtml(h)}</option>`).join('')}</select></label>`).join('')}</div>`}
+      ${normalizedPreviewTable(imp.rows)}
+      <div style=\"display:flex;justify-content:flex-end;margin-top:16px\"><button id=\"confirmImportBtn\" class=\"btn btn-primary\" ${imp.rows.length ? '' : 'disabled'}>Importar ${imp.rows.length} item(ns)</button></div>`;
+  }"""
+          replace_once(old_preview, new_preview, 'prévia de múltiplas abas')
+
+          # Mostrar categoria na prévia.
+          replace_once(
+          """<thead><tr><th>Código</th><th>Descrição</th><th>Tipo</th><th>Qtde</th><th>Un.</th><th>Cor</th><th>Medidas</th><th>Origem</th><th>Pintura</th></tr></thead><tbody>${rows.map((r, index) => `<tr><td>${escapeHtml(r.code || '')}</td><td><span class=\"cell-main\">${escapeHtml(r.description || '')}</span></td><td>${escapeHtml(r.type || '')}</td>""",
+          """<thead><tr><th>Categoria / aba</th><th>Código</th><th>Descrição</th><th>Tipo</th><th>Qtde</th><th>Un.</th><th>Cor</th><th>Medidas</th><th>Origem</th><th>Pintura</th></tr></thead><tbody>${rows.map((r, index) => `<tr><td><strong>${escapeHtml(r.category || 'Importado')}</strong></td><td>${escapeHtml(r.code || '')}</td><td><span class=\"cell-main\">${escapeHtml(r.description || '')}</span></td><td>${escapeHtml(r.type || '')}</td>""",
+          'coluna categoria da prévia')
+
+          # Carregar todas as abas como categorias.
+          replace_once(
+          """      state.importer.sheetNames = state.importer.workbook.SheetNames;
+      selectWorkbookSheet(state.importer.sheetNames[0]);""",
+          """      state.importer.sheetNames = state.importer.workbook.SheetNames;
+      if (state.importer.sheetNames.length > 1) selectAllWorkbookSheets();
+      else selectWorkbookSheet(state.importer.sheetNames[0]);""",
+          'carregamento das abas')
+
+          old_select = """function selectWorkbookSheet(sheetName) {
+  const imp = state.importer;
+  imp.selectedSheet = sheetName;
+  const sheet = imp.workbook.Sheets[sheetName];
+  imp.matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+  imp.headerRow = detectHeaderRow(imp.matrix);
+  imp.headers = makeUniqueHeaders(imp.matrix[imp.headerRow] || []);
+  imp.mapping = suggestColumnMapping(imp.headers);
+  imp.rows = normalizeMatrixRows();
+  renderImporter();
+}"""
+          new_select = """function workbookSheetContext(sheetName) {
+  const imp = state.importer;
+  const sheet = imp.workbook.Sheets[sheetName];
+  const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+  const headerRow = detectHeaderRow(matrix);
+  const headers = makeUniqueHeaders(matrix[headerRow] || []);
+  const mapping = suggestColumnMapping(headers);
+  const rows = normalizeMatrixRows({ matrix, headerRow, headers, mapping, category: sheetName });
+  return { sheetName, matrix, headerRow, headers, mapping, rows };
+}
+
+function selectAllWorkbookSheets() {
+  const imp = state.importer;
+  imp.selectedSheet = '__all__';
+  imp.sheetContexts = {};
+  imp.rows = [];
+  imp.sheetNames.forEach(sheetName => {
+    const context = workbookSheetContext(sheetName);
+    imp.sheetContexts[sheetName] = context;
+    imp.rows.push(...context.rows);
+  });
+  imp.matrix = []; imp.headers = []; imp.mapping = {}; imp.headerRow = 0;
+  renderImporter();
+}
+
+function selectWorkbookSheet(sheetName) {
+  if (sheetName === '__all__') { selectAllWorkbookSheets(); return; }
+  const imp = state.importer;
+  const context = workbookSheetContext(sheetName);
+  imp.selectedSheet = sheetName;
+  imp.matrix = context.matrix;
+  imp.headerRow = context.headerRow;
+  imp.headers = context.headers;
+  imp.mapping = context.mapping;
+  imp.rows = context.rows;
+  renderImporter();
+}"""
+          replace_once(old_select, new_select, 'seleção e leitura das abas')
+
+          # Normalizador aceita contexto de cada aba, sem depender do campo da tela.
+          replace_once(
+          """function normalizeMatrixRows() {
+  const imp = state.importer;
+  const mappedIndexes = new Set(Object.values(imp.mapping).map(Number));
+  const category = $('#importCategory')?.value || imp.selectedSheet || 'Importado';
+  return imp.matrix.slice(imp.headerRow + 1).map((row, rowIndex) => {
+    const getField = key => imp.mapping[key] === undefined ? '' : row[imp.mapping[key]];""",
+          """function normalizeMatrixRows(context = null) {
+  const imp = state.importer;
+  const matrix = context?.matrix || imp.matrix;
+  const headerRow = context?.headerRow ?? imp.headerRow;
+  const headers = context?.headers || imp.headers;
+  const mapping = context?.mapping || imp.mapping;
+  const category = context?.category || (imp.selectedSheet === '__all__' ? 'Importado' : imp.selectedSheet) || 'Importado';
+  const mappedIndexes = new Set(Object.values(mapping).map(Number));
+  return matrix.slice(headerRow + 1).map((row, rowIndex) => {
+    const getField = key => mapping[key] === undefined ? '' : row[mapping[key]];""",
+          'normalizador por aba')
+
+          replace_once(
+          """    row.forEach((value, index) => { if (!mappedIndexes.has(index) && value !== '' && value !== null && imp.headers[index]) details[imp.headers[index]] = value; });""",
+          """    row.forEach((value, index) => { if (!mappedIndexes.has(index) && value !== '' && value !== null && headers[index]) details[headers[index]] = value; });""",
+          'cabeçalhos por aba')
+
+          replace_once(
+          """      importRow: imp.headerRow + rowIndex + 2""",
+          """      importRow: headerRow + rowIndex + 2""",
+          'linha de origem por aba')
+
+          # Não sobrescrever categoria de cada aba, a menos que o usuário preencha a substituição.
+          replace_once(
+          """  const category = ($('#importCategory')?.value || state.importer.selectedSheet || '').trim();
+  const rows = state.importer.rows;""",
+          """  const categoryOverride = ($('#importCategory')?.value || state.importer.categoryOverride || '').trim();
+  const rows = state.importer.rows;""",
+          'categoria na confirmação')
+
+          replace_once(
+          """      ...row, id, projectId, category: category || row.category || 'Importado',""",
+          """      ...row, id, projectId, category: categoryOverride || row.category || 'Importado',""",
+          'salvamento da categoria')
+
+          # Compra em lote: botão na tela Compras.
+          replace_once(
+          """      <div class=\"page-actions\"><button class=\"btn btn-ghost\" data-action=\"import\">⇧ Importar</button><button class=\"btn btn-primary\" data-action=\"new-material\">+ Material</button></div>""",
+          """      <div class=\"page-actions\">${route === 'compras' ? '<button id=\"bulkPurchaseBtn\" class=\"btn btn-secondary\" disabled>Registrar compra em lote (0)</button>' : ''}<button class=\"btn btn-ghost\" data-action=\"import\">⇧ Importar</button><button class=\"btn btn-primary\" data-action=\"new-material\">+ Material</button></div>""",
+          'botão de compra em lote')
+
+          replace_once(
+          """    ${materials.length ? renderMaterialsTable(materials) :""",
+          """    ${materials.length ? renderMaterialsTable(materials, route) :""",
+          'rota da tabela')
+
+          replace_once(
+          """  bindMaterialTableActions(view);
+}""",
+          """  bindMaterialTableActions(view);
+  if (route === 'compras') bindBulkPurchaseActions(view);
+}""",
+          'eventos de compra em lote')
+
+          old_table = """function renderMaterialsTable(materials) {
+  return `<div class=\"table-wrap\"><table class=\"data-table\"><thead><tr>
+    <th>Material</th><th>Categoria</th><th>Origem</th><th>Quantidade</th><th>Etapa atual</th><th>Previsão</th><th>Próxima ação</th><th class=\"right\">Ações</th>
+  </tr></thead><tbody>${materials.map(materialRow).join('')}</tbody></table></div>`;
+}
+
+function materialRow(material) {"""
+          new_table = """function renderMaterialsTable(materials, route = 'materiais') {
+  const selectable = route === 'compras';
+  return `<div class=\"table-wrap\"><table class=\"data-table\"><thead><tr>
+    ${selectable ? '<th style=\"width:44px;text-align:center\"><input id=\"selectAllPurchases\" type=\"checkbox\" aria-label=\"Selecionar todos os itens visíveis\" /></th>' : ''}<th>Material</th><th>Categoria</th><th>Origem</th><th>Quantidade</th><th>Etapa atual</th><th>Previsão</th><th>Próxima ação</th><th class=\"right\">Ações</th>
+  </tr></thead><tbody>${materials.map(material => materialRow(material, selectable)).join('')}</tbody></table></div>`;
+}
+
+function materialRow(material, selectable = false) {"""
+          replace_once(old_table, new_table, 'tabela com seleção')
+
+          replace_once(
+          """  return `<tr>
+    <td><span class=\"cell-main\">""",
+          """  return `<tr>
+    ${selectable ? `<td style=\"text-align:center\"><input type=\"checkbox\" data-bulk-purchase-item=\"${material.id}\" aria-label=\"Selecionar ${escapeHtml(material.description || 'material')}\" /></td>` : ''}
+    <td><span class=\"cell-main\">""",
+          'checkbox por material')
+
+          # Funções de seleção e gravação em lote, inseridas antes do modal individual de material.
+          marker = "\nfunction openMaterialModal(materialId = '') {"
+          if marker not in text:
+              raise SystemExit('Ponto de inserção da compra em lote não encontrado.')
+          bulk_code = r'''
+
+function bindBulkPurchaseActions(root) {
+  const selectAll = $('#selectAllPurchases', root);
+  const items = $$('[data-bulk-purchase-item]', root);
+  const button = $('#bulkPurchaseBtn', root);
+  const sync = () => {
+    const selected = items.filter(item => item.checked);
+    if (button) {
+      button.disabled = selected.length === 0;
+      button.textContent = `Registrar compra em lote (${selected.length})`;
+    }
+    if (selectAll) {
+      selectAll.checked = items.length > 0 && selected.length === items.length;
+      selectAll.indeterminate = selected.length > 0 && selected.length < items.length;
+    }
+  };
+  selectAll?.addEventListener('change', () => { items.forEach(item => { item.checked = selectAll.checked; }); sync(); });
+  items.forEach(item => item.addEventListener('change', sync));
+  button?.addEventListener('click', () => {
+    const ids = items.filter(item => item.checked).map(item => item.dataset.bulkPurchaseItem);
+    openBulkPurchaseModal(ids);
+  });
+  sync();
+}
+
+function openBulkPurchaseModal(materialIds) {
+  const materials = materialIds.map(id => state.materials[id]).filter(material => material && material.source === 'compra');
+  if (!materials.length) { toast('Selecione pelo menos um material de compra.', 'error'); return; }
+  openModal({
+    title: 'Registrar compra em lote',
+    subtitle: `${materials.length} item(ns) selecionado(s)`,
+    small: true,
+    body: `<form id="bulkPurchaseForm" class="form-grid">
+      <label class="field full"><span>Fornecedor *</span><input name="supplier" required /></label>
+      <label class="field full"><span>Pedido / OC</span><input name="orderNumber" /></label>
+      <label class="field"><span>Data da compra *</span><input name="purchaseDate" type="date" value="${todayISO()}" required /></label>
+      <label class="field"><span>Previsão de chegada *</span><input name="deliveryEta" type="date" required /></label>
+      <div class="import-note full">Os mesmos dados de compra serão aplicados aos ${materials.length} itens selecionados. Quantidades, categorias e pintura continuarão individuais.</div>
+    </form>`,
+    footer: '<button class="btn btn-ghost" data-close-modal="true">Cancelar</button><button id="saveBulkPurchaseBtn" class="btn btn-primary">Registrar compra</button>'
+  });
+  $$('[data-close-modal="true"]', $('#modalRoot')).forEach(button => button.addEventListener('click', closeModal));
+  $('#saveBulkPurchaseBtn').addEventListener('click', async () => {
+    const form = $('#bulkPurchaseForm');
+    if (!form.reportValidity()) return;
+    const button = $('#saveBulkPurchaseBtn');
+    setBusy(button, true, 'Registrando...');
+    const data = Object.fromEntries(new FormData(form).entries());
+    const updates = {};
+    materials.forEach(material => {
+      const payload = { ...material, ...data, updatedAt: now(), updatedBy: state.user.uid };
+      payload.status = deriveMaterialStatus(payload);
+      updates[`materials/${state.currentProjectId}/${material.id}`] = payload;
+    });
+    try {
+      await update(ref(db), updates);
+      await logActivity(state.currentProjectId, 'compra_em_lote', `Compra registrada para ${materials.length} item(ns) · ${data.supplier}`);
+      await recalculateProjectSummary(state.currentProjectId);
+      closeModal();
+      toast(`Compra registrada para ${materials.length} item(ns).`);
+    } catch (error) {
+      toast(authErrorMessage(error), 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  });
+}
+'''
+          text = text.replace(marker, bulk_code + marker, 1)
+
+          path.write_text(text, encoding='utf-8')
+
+          # Força o navegador a buscar o JavaScript novo.
+          index = Path('public/index.html')
+          html = index.read_text(encoding='utf-8')
+          html = re.sub(r'<script type="module" src="\./app\.js(?:\?v=[^"]*)?"></script>', '<script type="module" src="./app.js?v=20260731-1125"></script>', html)
+          index.write_text(html, encoding='utf-8')
+          PY
+
+      - name: Validar JavaScript
+        run: node --check public/app.js
+
+      - name: Salvar correções
+        shell: bash
+        run: |
+          git config user.name "ObraFlow Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add public/app.js public/index.html
+          git commit -m "Importa cada aba como categoria e registra compras em lote"
+          git push
