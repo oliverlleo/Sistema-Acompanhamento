@@ -3,7 +3,8 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 const loaded = {
   importar: false,
-  compras: false
+  compras: false,
+  medidas: false
 };
 
 function currentRoute() {
@@ -44,6 +45,17 @@ function scheduleImportPreparation() {
   [0, 120, 350, 800, 1500].forEach(delay => setTimeout(prepareImportChoices, delay));
 }
 
+async function loadMeasuresFeature() {
+  if (loaded.medidas) return;
+  loaded.medidas = true;
+  try {
+    await import('./queue-measures.js?v=20260731-1438');
+  } catch (error) {
+    loaded.medidas = false;
+    console.error('Falha ao carregar medidas das filas:', error);
+  }
+}
+
 async function loadRouteFeature() {
   const route = currentRoute();
 
@@ -59,6 +71,10 @@ async function loadRouteFeature() {
     }
     scheduleImportPreparation();
     return;
+  }
+
+  if (route === 'compras' || route === 'recebimento') {
+    await loadMeasuresFeature();
   }
 
   if (route === 'compras' && !loaded.compras) {
