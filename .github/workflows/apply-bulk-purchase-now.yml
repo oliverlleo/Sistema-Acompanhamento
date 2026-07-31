@@ -1,0 +1,185 @@
+name: Aplicar compra em lote agora
+
+on:
+  push:
+    paths:
+      - .github/workflows/apply-bulk-purchase-now.yml
+
+permissions:
+  contents: write
+
+jobs:
+  aplicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Adicionar seleção e compra em lote
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          app_path = Path('public/app.js')
+          text = app_path.read_text(encoding='utf-8')
+
+          if 'function openBulkPurchaseModal(' in text:
+              print('Compra em lote já aplicada.')
+          else:
+              old_actions = '''      <div class="page-actions"><button class="btn btn-ghost" data-action="import">⇧ Importar</button><button class="btn btn-primary" data-action="new-material">+ Material</button></div>'''
+              new_actions = '''      <div class="page-actions">${route === 'compras' ? '<button id="bulkPurchaseBtn" class="btn btn-secondary" disabled>Registrar compra em lote (0)</button>' : ''}<button class="btn btn-ghost" data-action="import">⇧ Importar</button><button class="btn btn-primary" data-action="new-material">+ Material</button></div>'''
+              if old_actions not in text:
+                  raise SystemExit('Não encontrei a área dos botões da tela Compras.')
+              text = text.replace(old_actions, new_actions, 1)
+
+              old_render_call = '${materials.length ? renderMaterialsTable(materials) :'
+              if old_render_call not in text:
+                  raise SystemExit('Não encontrei a chamada da tabela de materiais.')
+              text = text.replace(old_render_call, '${materials.length ? renderMaterialsTable(materials, route) :', 1)
+
+              old_bind = '''  bindMaterialTableActions(view);
+}'''
+              new_bind = '''  bindMaterialTableActions(view);
+  if (route === 'compras') bindBulkPurchaseActions(view);
+}'''
+              if old_bind not in text:
+                  raise SystemExit('Não encontrei o ponto de eventos da tabela.')
+              text = text.replace(old_bind, new_bind, 1)
+
+              table_pattern = re.compile(r'''function renderMaterialsTable\(materials\) \{.*?\n\}\n\nfunction materialRow\(material\) \{''', re.S)
+              table_replacement = '''function renderMaterialsTable(materials, route = 'materiais') {
+  const selectable = route === 'compras';
+  return `<div class="table-wrap"><table class="data-table"><thead><tr>
+    ${selectable ? '<th style="width:44px;text-align:center"><input id="selectAllPurchases" type="checkbox" aria-label="Selecionar todos os itens que precisam comprar" /></th>' : ''}<th>Material</th><th>Categoria</th><th>Origem</th><th>Quantidade</th><th>Etapa atual</th><th>Previsão</th><th>Próxima ação</th><th class="right">Ações</th>
+  </tr></thead><tbody>${materials.map(material => materialRow(material, selectable)).join('')}</tbody></table></div>`;
+}
+
+function materialRow(material, selectable = false) {'''
+              text, count = table_pattern.subn(lambda _: table_replacement, text, count=1)
+              if count != 1:
+                  raise SystemExit('Não consegui adaptar a tabela para seleção em lote.')
+
+              old_row = '''  return `<tr>
+    <td><span class="cell-main">'''
+              new_row = '''  const bulkEligible = selectable && material.source === 'compra' && status === 'comprar';
+  return `<tr>
+    ${selectable ? `<td style="text-align:center">${bulkEligible ? `<input type="checkbox" data-bulk-purchase-item="${material.id}" aria-label="Selecionar ${escapeHtml(material.description || 'material')}" />` : ''}</td>` : ''}
+    <td><span class="cell-main">'''
+              if old_row not in text:
+                  raise SystemExit('Não encontrei a primeira célula da linha de material.')
+              text = text.replace(old_row, new_row, 1)
+
+              marker = "\nfunction openMaterialModal(materialId = '') {"
+              if marker not in text:
+                  raise SystemExit('Não encontrei o ponto para incluir a compra em lote.')
+
+              bulk_functions = r'''
+
+function bindBulkPurchaseActions(root) {
+  const selectAll = $('#selectAllPurchases', root);
+  const items = $$('[data-bulk-purchase-item]', root);
+  const button = $('#bulkPurchaseBtn', root);
+
+  const sync = () => {
+    const selected = items.filter(item => item.checked);
+    if (button) {
+      button.disabled = selected.length === 0;
+      button.textContent = `Registrar compra em lote (${selected.length})`;
+    }
+    if (selectAll) {
+      selectAll.checked = items.length > 0 && selected.length === items.length;
+      selectAll.indeterminate = selected.length > 0 && selected.length < items.length;
+    }
+  };
+
+  selectAll?.addEventListener('change', () => {
+    items.forEach(item => { item.checked = selectAll.checked; });
+    sync();
+  });
+  items.forEach(item => item.addEventListener('change', sync));
+  button?.addEventListener('click', () => {
+    const ids = items.filter(item => item.checked).map(item => item.dataset.bulkPurchaseItem);
+    openBulkPurchaseModal(ids);
+  });
+  sync();
+}
+
+function openBulkPurchaseModal(materialIds) {
+  const materials = materialIds
+    .map(id => state.materials[id])
+    .filter(material => material && material.source === 'compra' && (material.status || deriveMaterialStatus(material)) === 'comprar');
+
+  if (!materials.length) {
+    toast('Selecione pelo menos um item que precisa comprar.', 'error');
+    return;
+  }
+
+  openModal({
+    title: 'Registrar compra em lote',
+    subtitle: `${materials.length} item(ns) selecionado(s)`,
+    small: true,
+    body: `<form id="bulkPurchaseForm" class="form-grid">
+      <label class="field full"><span>Fornecedor *</span><input name="supplier" required /></label>
+      <label class="field full"><span>Pedido / OC</span><input name="orderNumber" /></label>
+      <label class="field"><span>Data da compra *</span><input name="purchaseDate" type="date" value="${todayISO()}" required /></label>
+      <label class="field"><span>Previsão de chegada *</span><input name="deliveryEta" type="date" required /></label>
+      <div class="import-note full">Os dados acima serão aplicados aos ${materials.length} itens selecionados. Quantidades, categorias e pintura permanecem individuais.</div>
+    </form>`,
+    footer: '<button class="btn btn-ghost" data-close-modal="true">Cancelar</button><button id="saveBulkPurchaseBtn" class="btn btn-primary">Registrar compra</button>'
+  });
+
+  $$('[data-close-modal="true"]', $('#modalRoot')).forEach(button => button.addEventListener('click', closeModal));
+  $('#saveBulkPurchaseBtn').addEventListener('click', async () => {
+    const form = $('#bulkPurchaseForm');
+    if (!form.reportValidity()) return;
+
+    const button = $('#saveBulkPurchaseBtn');
+    setBusy(button, true, 'Registrando...');
+    const data = Object.fromEntries(new FormData(form).entries());
+    const updates = {};
+
+    materials.forEach(material => {
+      const payload = { ...material, ...data, updatedAt: now(), updatedBy: state.user.uid };
+      payload.status = deriveMaterialStatus(payload);
+      updates[`materials/${state.currentProjectId}/${material.id}`] = payload;
+    });
+
+    try {
+      await update(ref(db), updates);
+      await logActivity(state.currentProjectId, 'compra_em_lote', `Compra registrada para ${materials.length} item(ns) · ${data.supplier}`);
+      await recalculateProjectSummary(state.currentProjectId);
+      closeModal();
+      toast(`Compra registrada para ${materials.length} item(ns).`);
+    } catch (error) {
+      toast(authErrorMessage(error), 'error');
+    } finally {
+      setBusy(button, false);
+    }
+  });
+}
+'''
+              text = text.replace(marker, bulk_functions + marker, 1)
+              app_path.write_text(text, encoding='utf-8')
+
+          index_path = Path('public/index.html')
+          html = index_path.read_text(encoding='utf-8')
+          html = re.sub(
+              r'<script type="module" src="\./app\.js(?:\?v=[^"]*)?"></script>',
+              '<script type="module" src="./app.js?v=20260731-1135"></script>',
+              html
+          )
+          index_path.write_text(html, encoding='utf-8')
+          PY
+
+      - name: Validar JavaScript
+        run: node --check public/app.js
+
+      - name: Publicar correção
+        shell: bash
+        run: |
+          git config user.name "ObraFlow Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add public/app.js public/index.html
+          git commit -m "Adiciona registro de compra em lote" || exit 0
+          git push
