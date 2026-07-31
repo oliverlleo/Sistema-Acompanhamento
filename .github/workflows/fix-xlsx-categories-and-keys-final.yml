@@ -1,0 +1,257 @@
+name: Corrigir categorias XLSX e chaves Firebase
+
+on:
+  push:
+    paths:
+      - .github/workflows/fix-xlsx-categories-and-keys-final.yml
+
+permissions:
+  contents: write
+
+jobs:
+  corrigir:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Aplicar correções no importador
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('public/app.js')
+          text = path.read_text(encoding='utf-8')
+
+          def sub_once(pattern, replacement, label):
+              global text
+              text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'Não foi possível alterar: {label}')
+
+          # O campo não deve preencher uma categoria única automaticamente.
+          text = text.replace(
+              '<label class="field"><span>Categoria padrão</span><input id="importCategory" value="${escapeHtml(imp.selectedSheet || \'\')}" placeholder="Ex.: Perfis, Ferragens, Vidros" /></label>',
+              '<label class="field"><span>Substituir categoria de todos (opcional)</span><input id="importCategory" value="" placeholder="Deixe vazio para usar o nome de cada aba" /></label>',
+              1
+          )
+
+          new_preview = r'''function renderImportPreview() {
+  const imp = state.importer;
+  if (!imp.fileName) return `<div class="empty" style="min-height:440px"><div><div class="empty-icon">⇧</div><h3>Envie uma planilha ou PDF</h3><p>Você poderá conferir os campos antes da importação.</p></div></div>`;
+  if (imp.type === 'xlsx' && imp.workbook) {
+    const allSheets = imp.selectedSheet === '__all__';
+    return `${imp.sheetNames.length > 1 ? `<label class="field" style="max-width:440px;margin-bottom:14px"><span>Abas da planilha</span><select id="sheetSelect"><option value="__all__" ${allSheets ? 'selected' : ''}>Todas as abas — cada aba vira uma categoria</option>${imp.sheetNames.map(name => `<option value="${escapeHtml(name)}" ${name === imp.selectedSheet ? 'selected' : ''}>Somente: ${escapeHtml(name)}</option>`).join('')}</select></label>` : ''}
+      ${allSheets ? `<div class="import-note" style="margin-bottom:14px"><strong>${imp.sheetNames.length} abas encontradas.</strong> O nome de cada aba será usado como categoria dos itens daquela aba.</div>` : `<div class="section-title" style="margin:0 0 10px">Mapeamento das colunas</div><div class="mapping-grid">${IMPORT_FIELDS.map(([key, label]) => `<label class="field"><span>${escapeHtml(label)}</span><select data-map-field="${key}"><option value="">Não importar</option>${imp.headers.map((h, idx) => `<option value="${idx}" ${String(imp.mapping[key]) === String(idx) ? 'selected' : ''}>${escapeHtml(h)}</option>`).join('')}</select></label>`).join('')}</div>`}
+      ${normalizedPreviewTable(imp.rows)}
+      <div style="display:flex;justify-content:flex-end;margin-top:16px"><button id="confirmImportBtn" class="btn btn-primary" ${imp.rows.length ? '' : 'disabled'}>Importar ${imp.rows.length} item(ns)</button></div>`;
+  }
+  if (imp.type === 'pdf') {
+    return `${imp.parser ? `<div class="import-note" style="margin-bottom:14px">Formato reconhecido: <strong>${escapeHtml(imp.parser)}</strong>. Confira a prévia antes de importar.</div>` : `<div class="import-note" style="margin-bottom:14px;background:var(--warning-soft);color:#7a2e0e">O PDF não correspondeu aos modelos de Vidros ou Vedaportas. O texto extraído aparece abaixo para conferência; este arquivo não será importado automaticamente.</div>`}
+      ${imp.rows.length ? normalizedPreviewTable(imp.rows) : `<div class="pdf-lines">${escapeHtml(imp.rawPdfLines.join('\n'))}</div>`}
+      <div style="display:flex;justify-content:flex-end;margin-top:16px"><button id="confirmImportBtn" class="btn btn-primary" ${imp.rows.length ? '' : 'disabled'}>Importar ${imp.rows.length} item(ns)</button></div>`;
+  }
+  return `<p class="muted">Processando arquivo...</p>`;
+}
+
+'''
+          sub_once(r'function renderImportPreview\(\) \{.*?\n\}\n\n(?=function normalizedPreviewTable)', new_preview, 'prévia das abas')
+
+          new_table = r'''function normalizedPreviewTable(rows) {
+  return `<div class="table-wrap preview-table" style="margin-top:16px"><table class="data-table" style="min-width:1240px"><thead><tr><th>Categoria / aba</th><th>Código</th><th>Descrição</th><th>Tipo</th><th>Qtde</th><th>Un.</th><th>Cor</th><th>Medidas</th><th>Origem</th><th>Pintura</th></tr></thead><tbody>${rows.map((r, index) => `<tr><td><strong>${escapeHtml(r.category || 'Importado')}</strong></td><td>${escapeHtml(r.code || '')}</td><td><span class="cell-main">${escapeHtml(r.description || '')}</span></td><td>${escapeHtml(r.type || '')}</td><td>${fmtQty(r.qtyRequired)}</td><td>${escapeHtml(r.unit || 'un')}</td><td>${escapeHtml(r.color || '')}</td><td>${escapeHtml(r.dimensions || '')}</td><td><select data-import-source="${index}" aria-label="Origem do item" style="min-width:150px"><option value="compra" ${(r.source || state.importer.defaultSource) === 'compra' ? 'selected' : ''}>Comprar</option><option value="estoque" ${(r.source || state.importer.defaultSource) === 'estoque' ? 'selected' : ''}>Estoque</option></select></td><td style="text-align:center"><input data-import-painting="${index}" type="checkbox" ${Boolean(r.paintingRequired ?? state.importer.defaultPainting) ? 'checked' : ''} aria-label="Vai para pintura" /></td></tr>`).join('')}</tbody></table></div>`;
+}
+
+'''
+          sub_once(r'function normalizedPreviewTable\(rows\) \{.*?\n\}\n\n(?=function bindImportPreviewEvents)', new_table, 'categoria na tabela de prévia')
+
+          new_handle = r'''async function handleImportFile(file) {
+  const extension = file.name.split('.').pop().toLowerCase();
+  resetImporter();
+  state.importer.file = file; state.importer.fileName = file.name;
+  try {
+    if (['xlsx', 'xls'].includes(extension)) {
+      state.importer.type = 'xlsx';
+      const buffer = await file.arrayBuffer();
+      state.importer.workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+      state.importer.sheetNames = state.importer.workbook.SheetNames;
+      if (state.importer.sheetNames.length > 1) selectAllWorkbookSheets();
+      else selectWorkbookSheet(state.importer.sheetNames[0]);
+    } else if (extension === 'pdf') {
+      state.importer.type = 'pdf'; renderImporter();
+      const lines = await extractPdfLines(file);
+      state.importer.rawPdfLines = lines;
+      const recognized = parseKnownPdf(lines);
+      state.importer.rows = recognized.rows.map(row => ({
+        ...row,
+        source: state.importer.defaultSource || 'compra',
+        paintingRequired: Boolean(state.importer.defaultPainting)
+      }));
+      state.importer.parser = recognized.parser;
+      renderImporter();
+    } else throw new Error('Formato não suportado.');
+  } catch (error) {
+    toast(`Não foi possível ler o arquivo: ${error.message}`, 'error');
+    renderImporter();
+  }
+}
+
+'''
+          sub_once(r'async function handleImportFile\(file\) \{.*?\n\}\n\n(?=function selectWorkbookSheet)', new_handle, 'leitura de todas as abas')
+
+          new_select = r'''function workbookSheetContext(sheetName) {
+  const imp = state.importer;
+  const sheet = imp.workbook.Sheets[sheetName];
+  const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+  const headerRow = detectHeaderRow(matrix);
+  const headers = makeUniqueHeaders(matrix[headerRow] || []);
+  const mapping = suggestColumnMapping(headers);
+  const rows = normalizeMatrixRows({ matrix, headerRow, headers, mapping, category: sheetName });
+  return { sheetName, matrix, headerRow, headers, mapping, rows };
+}
+
+function selectAllWorkbookSheets() {
+  const imp = state.importer;
+  imp.selectedSheet = '__all__';
+  imp.rows = [];
+  imp.sheetNames.forEach(sheetName => {
+    const context = workbookSheetContext(sheetName);
+    imp.rows.push(...context.rows);
+  });
+  imp.matrix = [];
+  imp.headerRow = 0;
+  imp.headers = [];
+  imp.mapping = {};
+  renderImporter();
+}
+
+function selectWorkbookSheet(sheetName) {
+  if (sheetName === '__all__') { selectAllWorkbookSheets(); return; }
+  const imp = state.importer;
+  const context = workbookSheetContext(sheetName);
+  imp.selectedSheet = sheetName;
+  imp.matrix = context.matrix;
+  imp.headerRow = context.headerRow;
+  imp.headers = context.headers;
+  imp.mapping = context.mapping;
+  imp.rows = context.rows;
+  renderImporter();
+}
+
+'''
+          sub_once(r'function selectWorkbookSheet\(sheetName\) \{.*?\n\}\n\n(?=function detectHeaderRow)', new_select, 'separação por aba')
+
+          new_normalize = r'''function firebaseSafeObject(value) {
+  if (Array.isArray(value)) return value.map(firebaseSafeObject);
+  if (!value || typeof value !== 'object') return value;
+  const result = {};
+  Object.entries(value).forEach(([rawKey, child]) => {
+    const base = String(rawKey || 'campo').replace(/[.#$\/\[\]]/g, '_').trim() || 'campo';
+    let key = base;
+    let suffix = 2;
+    while (Object.prototype.hasOwnProperty.call(result, key)) key = `${base}_${suffix++}`;
+    result[key] = firebaseSafeObject(child);
+  });
+  return result;
+}
+
+function normalizeMatrixRows(context = null) {
+  const imp = state.importer;
+  const matrix = context?.matrix || imp.matrix;
+  const headerRow = context?.headerRow ?? imp.headerRow;
+  const headers = context?.headers || imp.headers;
+  const mapping = context?.mapping || imp.mapping;
+  const category = context?.category || (imp.selectedSheet === '__all__' ? 'Importado' : imp.selectedSheet) || 'Importado';
+  const mappedIndexes = new Set(Object.values(mapping).map(Number));
+  return matrix.slice(headerRow + 1).map((row, rowIndex) => {
+    const getField = key => mapping[key] === undefined ? '' : row[mapping[key]];
+    const code = String(getField('code') || '').trim();
+    const description = String(getField('description') || code || '').trim();
+    const quantity = num(getField('quantity')) || 1;
+    const width = getField('width'), height = getField('height'), length = getField('length'), area = getField('area');
+    const details = {};
+    row.forEach((value, index) => {
+      if (mappedIndexes.has(index) || value === '' || value === null || !headers[index]) return;
+      const base = String(headers[index]).replace(/[.#$\/\[\]]/g, '_').trim() || `Coluna_${index + 1}`;
+      let key = base;
+      let suffix = 2;
+      while (Object.prototype.hasOwnProperty.call(details, key)) key = `${base}_${suffix++}`;
+      details[key] = value;
+    });
+    return {
+      code, description, type: String(getField('type') || '').trim(), category,
+      qtyRequired: quantity, unit: String(getField('unit') || 'un').trim() || 'un',
+      color: String(getField('color') || '').trim(),
+      dimensions: [width ? `L ${width}` : '', height ? `A ${height}` : '', length ? `C ${length}` : '', area ? `${area} m²` : ''].filter(Boolean).join(' · '),
+      notes: String(getField('notes') || '').trim(), sourceDetails: details,
+      source: imp.defaultSource || 'compra', paintingRequired: Boolean(imp.defaultPainting),
+      importRow: headerRow + rowIndex + 2
+    };
+  }).filter(row => {
+    const text = normalizeText([row.code, row.description].join(' '));
+    if (!row.code && !row.description) return false;
+    if (/resumo|observacoes gerais|total previsto|total quantidade|responsavel|orientacao|checklist de conferencia/.test(text)) return false;
+    return row.qtyRequired > 0;
+  });
+}
+
+'''
+          sub_once(r'function normalizeMatrixRows\(\) \{.*?\n\}\n\n(?=async function extractPdfLines)', new_normalize, 'normalização e chaves Firebase')
+
+          new_confirm = r'''async function confirmImport() {
+  const projectId = $('#importProject')?.value || state.currentProjectId;
+  if (!projectId || !state.projects[projectId]) { toast('Selecione a obra de destino.', 'error'); return; }
+  const categoryOverride = ($('#importCategory')?.value || '').trim();
+  const rows = state.importer.rows;
+  if (!rows.length) { toast('Nenhuma linha válida para importar.', 'error'); return; }
+  const button = $('#confirmImportBtn'); setBusy(button, true, 'Importando...');
+  const updates = {};
+  rows.forEach(row => {
+    const id = push(ref(db, `materials/${projectId}`)).key;
+    const payload = {
+      ...row, id, projectId,
+      category: categoryOverride || row.category || 'Importado',
+      sourceDetails: firebaseSafeObject(row.sourceDetails || {}),
+      source: row.source || state.importer.defaultSource || 'compra',
+      paintingRequired: Boolean(row.paintingRequired),
+      qtyReceived: 0, stockReservedQty: 0, paintingSentQty: 0,
+      paintingReturnedQty: 0, separatedQty: 0, siteDeliveredQty: 0,
+      importSource: state.importer.fileName, importType: state.importer.type,
+      createdAt: now(), createdBy: state.user.uid, updatedAt: now(), updatedBy: state.user.uid
+    };
+    payload.status = deriveMaterialStatus(payload);
+    updates[`materials/${projectId}/${id}`] = payload;
+  });
+  try {
+    await update(ref(db), updates);
+    await logActivity(projectId, 'importacao', `${rows.length} item(ns) importado(s) de ${state.importer.fileName}`);
+    await recalculateProjectSummary(projectId);
+    state.currentProjectId = projectId; localStorage.setItem('obraflow.currentProject', projectId); updateProjectSelect(); listenProjectData(projectId);
+    toast(`${rows.length} item(ns) importado(s) com sucesso.`);
+    resetImporter(); setRoute('materiais', { projectId });
+  } catch (error) { toast(authErrorMessage(error), 'error'); }
+  finally { setBusy(button, false); }
+}
+
+'''
+          sub_once(r'async function confirmImport\(\) \{.*?\n\}\n\n(?=// Atualiza status)', new_confirm, 'salvamento das categorias')
+
+          path.write_text(text, encoding='utf-8')
+
+          index = Path('public/index.html')
+          html = index.read_text(encoding='utf-8')
+          html = re.sub(r'<script type="module" src="\./app\.js(?:\?v=[^"]*)?"></script>', '<script type="module" src="./app.js?v=20260731-1200"></script>', html)
+          index.write_text(html, encoding='utf-8')
+          PY
+
+      - name: Validar JavaScript
+        run: node --check public/app.js
+
+      - name: Salvar correções
+        shell: bash
+        run: |
+          git config user.name "ObraFlow Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add public/app.js public/index.html
+          git commit -m "Importa todas as abas como categorias e limpa chaves do Firebase" || exit 0
+          git push
