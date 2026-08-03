@@ -9,6 +9,7 @@ import './tracking-unresolved-stage.js?v=20260803-1933';
 import './tracking-card-availability.js?v=20260803-1942';
 import './materials-origin-status.js?v=20260803-1943';
 import './calendar.js?v=20260803-1950';
+import './calendar-focus-fix.js?v=20260803-1951';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
