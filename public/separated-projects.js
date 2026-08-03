@@ -377,7 +377,7 @@ function renderProjectList(view) {
   view.innerHTML = `
     <div class="sep-shell">
       <div class="page-head">
-        <div><h2>Separados por obra</h2><p>Acompanhe o avanço, localize uma obra e abra somente os materiais que já tiveram separação.</p></div>
+        <div><h2>Acompanhamento por obra</h2><p>Localize uma obra para acompanhar compras, pintura, materiais conferidos e separação.</p></div>
       </div>
       <div class="sep-toolbar">
         <label class="sep-search" aria-label="Buscar obra">
@@ -546,8 +546,8 @@ function render() {
 
   const title = $('#pageTitle');
   const subtitle = $('#pageSubtitle');
-  if (title) title.textContent = 'Separados';
-  if (subtitle) subtitle.textContent = 'Materiais separados organizados por obra';
+  if (title) title.textContent = 'Acompanhamento';
+  if (subtitle) subtitle.textContent = 'Compras, pintura, conferência e separação por obra';
 
   if (!projectsReady || !materialsReady) {
     renderLoading(view);

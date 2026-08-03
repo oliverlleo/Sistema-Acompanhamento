@@ -197,19 +197,19 @@ function stageData(items) {
 
   data.stage = {
     comprado: {
-      label: 'Comprado', tone: 'blue', value: data.purchasedQty, total: data.purchaseRequired,
+      title: 'Comprado', tone: 'blue', value: data.purchasedQty, total: data.purchaseRequired,
       ...percent(data.purchasedQty, data.purchaseRequired)
     },
     pintura: {
-      label: 'Em pintura', tone: 'violet', value: data.inPaintingQty, total: data.paintingRequiredQty,
+      title: 'Em pintura', tone: 'violet', value: data.inPaintingQty, total: data.paintingRequiredQty,
       ...percent(data.inPaintingQty, data.paintingRequiredQty)
     },
     disponivel: {
-      label: 'Conferido', tone: 'amber', value: data.readyQty, total: data.totalRequired,
+      title: 'Conferido', tone: 'amber', value: data.readyQty, total: data.totalRequired,
       ...percent(data.readyQty, data.totalRequired)
     },
     separado: {
-      label: 'Separado', tone: 'green', value: data.separatedQty, total: data.totalRequired,
+      title: 'Separado', tone: 'green', value: data.separatedQty, total: data.totalRequired,
       ...percent(data.separatedQty, data.totalRequired)
     }
   };
@@ -269,7 +269,7 @@ function searchIcon() {
 function stageButton(key, meta) {
   return `<button type="button" class="trk-stage trk-stage-${meta.tone} ${activeStage === key ? 'active' : ''}" data-tracking-stage="${key}">
     <span class="trk-donut" style="--value:${meta.visual}"><strong>${meta.label === '0%' ? '0%' : meta.label}</strong></span>
-    <span class="trk-stage-copy"><strong>${escapeHtml(meta.label === '0%' ? meta.label.replace('0%', '') || key : meta.label) || escapeHtml(key)}</strong><span>${formatQty(meta.value)} de ${formatQty(meta.total)}</span></span>
+    <span class="trk-stage-copy"><strong>${escapeHtml(meta.title)}</strong><span>${formatQty(meta.value)} de ${formatQty(meta.total)}</span></span>
   </button>`;
 }
 

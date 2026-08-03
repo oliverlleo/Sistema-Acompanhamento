@@ -79,7 +79,7 @@ const ROUTES = {
   recebimento: ['Recebimento', 'Confirmação das entregas e quantidades recebidas'],
   pintura: ['Pintura', 'Envio, prazo e retorno dos itens que exigem pintura'],
   separacao: ['Separação', 'Materiais disponíveis que precisam ser separados para a obra'],
-  estoque: ['Materiais separados', 'Acompanhamento da separação por obra e categoria'],
+  estoque: ['Acompanhamento', 'Compras, pintura, conferência e separação por obra'],
   importar: ['Importar arquivos', 'Suba planilhas e PDFs sem perder o formato de origem'],
   usuarios: ['Usuários', 'Perfis e permissões da equipe']
 };
