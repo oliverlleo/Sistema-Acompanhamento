@@ -1,4 +1,4 @@
-import './commitment-summary.js?v=20260803-0932';
+import './commitment-summary.js?v=20260803-0959';
 import './search-caret-fix.js?v=20260803-0841';
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -52,7 +52,7 @@ async function loadMeasuresFeature() {
   if (loaded.medidas) return;
   loaded.medidas = true;
   try {
-    await import('./queue-measures.js?v=20260803-0932');
+    await import('./queue-measures.js?v=20260803-0959');
   } catch (error) {
     loaded.medidas = false;
     console.error('Falha ao carregar medidas das filas:', error);
@@ -66,7 +66,7 @@ async function loadRouteFeature() {
     if (!loaded.importar) {
       loaded.importar = true;
       try {
-        await import('./xlsx-import-fix.js?v=20260803-0932');
+        await import('./xlsx-import-fix.js?v=20260803-0959');
       } catch (error) {
         loaded.importar = false;
         console.error('Falha ao carregar importador XLSX:', error);
@@ -83,7 +83,7 @@ async function loadRouteFeature() {
   if (route === 'compras' && !loaded.compras) {
     loaded.compras = true;
     try {
-      await import('./bulk-purchase.js?v=20260803-0932');
+      await import('./bulk-purchase.js?v=20260803-0959');
     } catch (error) {
       loaded.compras = false;
       console.error('Falha ao carregar compra em lote:', error);
