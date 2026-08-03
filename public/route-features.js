@@ -6,8 +6,9 @@ import './tracking-item-counts.js?v=20260803-1648';
 import './tracking-available-summary.js?v=20260803-1925';
 import './tracking-card-stock-count.js?v=20260803-1633';
 import './tracking-unresolved-stage.js?v=20260803-1933';
-import './tracking-card-availability.js?v=20260803-1942';
+import './tracking-card-availability.js?v=20260803-1958';
 import './materials-origin-status.js?v=20260803-1943';
+import './purchase-needs-action-filter.js?v=20260803-1958';
 import './calendar.js?v=20260803-1950';
 import './calendar-focus-fix.js?v=20260803-1951';
 
