@@ -6,6 +6,8 @@ import './tracking-item-counts.js?v=20260803-1648';
 import './tracking-available-summary.js?v=20260803-1925';
 import './tracking-card-stock-count.js?v=20260803-1633';
 import './tracking-unresolved-stage.js?v=20260803-1933';
+import './tracking-card-availability.js?v=20260803-1942';
+import './materials-origin-status.js?v=20260803-1942';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
