@@ -1,6 +1,13 @@
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
 import { getDatabase, ref, onValue, get, update, push, set } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
+import {
+  allocation,
+  clamp,
+  deriveStatus,
+  number,
+  summaryForMaterials
+} from './material-flow.js?v=20260803-0932';
 
 const config = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
@@ -22,33 +29,8 @@ const state = {
   materials: {},
   selected: new Set(),
   unsubscribe: null,
-  decorateTimer: null
+  decorateTimer: 0
 };
-
-const stages = {
-  comprar: 0,
-  reservar_estoque: 5,
-  aguardando_entrega: 25,
-  compra_atrasada: 25,
-  recebido_parcial: 38,
-  aguarda_pintura: 48,
-  em_pintura: 60,
-  pintura_atrasada: 60,
-  pronto_separar: 74,
-  separado_parcial: 80,
-  separado: 90,
-  enviado_parcial: 94,
-  enviado_obra: 100
-};
-
-function number(value) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  let text = String(value ?? '').trim().replace(/\s/g, '');
-  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(text)) text = text.replace(/\./g, '').replace(',', '.');
-  else if (/^-?\d+(,\d+)$/.test(text)) text = text.replace(',', '.');
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, character => ({
@@ -56,8 +38,8 @@ function escapeHtml(value = '') {
   })[character]);
 }
 
-function isPast(date) {
-  return Boolean(date) && new Date(`${date}T23:59:59`).getTime() < Date.now();
+function formatQty(value) {
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(number(value));
 }
 
 function currentRoute() {
@@ -75,44 +57,12 @@ function closeModal() {
 
 function toast(message, type = 'success') {
   const host = $('#toastHost');
-  if (!host) {
-    alert(message);
-    return;
-  }
+  if (!host) return;
   const element = document.createElement('div');
   element.className = `toast ${type}`;
   element.textContent = message;
   host.appendChild(element);
   setTimeout(() => element.remove(), 4200);
-}
-
-function deriveStatus(material) {
-  if (!material.source || material.source === 'pendente') return 'comprar';
-  const required = Math.max(0, number(material.qtyRequired));
-  const delivered = number(material.siteDeliveredQty);
-  const separated = number(material.separatedQty);
-  const received = number(material.qtyReceived);
-  const reserved = number(material.stockReservedQty);
-  const available = material.source === 'estoque' ? reserved : received;
-  const sent = number(material.paintingSentQty);
-  const returned = number(material.paintingReturnedQty);
-
-  if (required > 0 && delivered >= required) return 'enviado_obra';
-  if (delivered > 0) return 'enviado_parcial';
-  if (required > 0 && separated >= required) return 'separado';
-  if (separated > 0) return 'separado_parcial';
-
-  if (material.paintingRequired) {
-    if (required > 0 && returned >= required) return 'pronto_separar';
-    if (returned > 0 && returned >= Math.min(required || sent, sent || required)) return 'pronto_separar';
-    if (sent > 0) return isPast(material.paintingEta) ? 'pintura_atrasada' : 'em_pintura';
-  }
-
-  if (required > 0 && available >= required) return material.paintingRequired ? 'aguarda_pintura' : 'pronto_separar';
-  if (available > 0) return 'recebido_parcial';
-  if (material.source === 'estoque') return 'pronto_separar';
-  if (!material.purchaseDate && !material.orderNumber) return 'comprar';
-  return isPast(material.deliveryEta) ? 'compra_atrasada' : 'aguardando_entrega';
 }
 
 function stopListening() {
@@ -142,7 +92,7 @@ function listenCurrentProject() {
       if (!state.materials[materialId]) state.selected.delete(materialId);
     });
     scheduleDecorate(0);
-  });
+  }, error => console.error('Falha ao ler materiais para definir origem:', error));
 }
 
 function materialIdFromRow(row) {
@@ -163,10 +113,15 @@ function addCheckbox(row, materialId) {
 
   const label = document.createElement('label');
   label.style.cssText = 'display:inline-flex;align-items:center;margin-right:10px;vertical-align:middle;cursor:pointer';
-  label.title = 'Selecionar para definir compra ou estoque em lote';
+  label.title = 'Selecionar para definir compra, estoque ou divisão';
   label.innerHTML = `<input type="checkbox" data-source-batch-id="${escapeHtml(materialId)}" aria-label="Selecionar material">`;
   const checkbox = $('input', label);
   checkbox.checked = state.selected.has(materialId);
+  checkbox.addEventListener('change', () => {
+    if (checkbox.checked) state.selected.add(materialId);
+    else state.selected.delete(materialId);
+    updateButtons();
+  });
   firstCell.insertBefore(label, firstCell.firstChild);
 }
 
@@ -231,7 +186,7 @@ function ensureActions() {
       updateButtons();
     });
 
-    $('#applySourceV2', group).addEventListener('click', openBulkSourceModal);
+    $('#applySourceV2', group).addEventListener('click', openSourceChoiceModal);
   }
 
   updateButtons();
@@ -269,7 +224,7 @@ function categorySummary(materialIds) {
     .join('');
 }
 
-function openBulkSourceModal() {
+function openSourceChoiceModal() {
   const materialIds = selectedMaterialIds();
   if (!materialIds.length) {
     toast('Selecione pelo menos um material.', 'error');
@@ -286,11 +241,12 @@ function openBulkSourceModal() {
           <button class="icon-btn modal-close" type="button" data-source-v2-close>×</button>
         </header>
         <div class="modal-body">
-          <p class="muted" style="margin:0 0 12px">A escolha será aplicada a todos os selecionados.</p>
-          <ul style="margin:0 0 18px;padding-left:20px;max-height:180px;overflow:auto">${categorySummary(materialIds)}</ul>
-          <div class="grid" style="grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
-            <button class="btn btn-primary" type="button" data-source-v2="compra" style="min-height:72px">Comprar</button>
-            <button class="btn btn-secondary" type="button" data-source-v2="estoque" style="min-height:72px">Usar estoque</button>
+          <p class="muted" style="margin:0 0 12px">Escolha como a quantidade necessária de cada material será atendida.</p>
+          <ul style="margin:0 0 18px;padding-left:20px;max-height:150px;overflow:auto">${categorySummary(materialIds)}</ul>
+          <div class="grid" style="grid-template-columns:1fr;gap:10px">
+            <button class="btn btn-primary" type="button" data-source-mode="compra" style="min-height:58px">Comprar toda a quantidade</button>
+            <button class="btn btn-secondary" type="button" data-source-mode="estoque" style="min-height:58px">Usar toda a quantidade do estoque</button>
+            <button class="btn btn-ghost" type="button" data-source-mode="misto" style="min-height:58px;border:1px solid var(--border)">Dividir entre compra + estoque</button>
           </div>
         </div>
         <footer class="modal-foot"><button class="btn btn-ghost" type="button" data-source-v2-close>Cancelar</button></footer>
@@ -301,56 +257,128 @@ function openBulkSourceModal() {
     if (event.target === event.currentTarget) closeModal();
   });
   $$('[data-source-v2-close]', root).forEach(button => button.addEventListener('click', closeModal));
-  $$('[data-source-v2]', root).forEach(button => button.addEventListener('click', () => {
-    saveSourceInBulk(materialIds, button.dataset.sourceV2, button);
+  $$('[data-source-mode]', root).forEach(button => button.addEventListener('click', () => {
+    const mode = button.dataset.sourceMode;
+    if (mode === 'misto') openSplitAllocationModal(materialIds);
+    else saveAllocations(materialIds, mode, {}, button);
   }));
+}
+
+function splitRows(materialIds) {
+  return materialIds.map(materialId => {
+    const material = state.materials[materialId];
+    const alloc = allocation(material);
+    const initialStock = material.source === 'estoque' ? alloc.required : material.source === 'misto' ? alloc.stockQty : 0;
+    const initialPurchase = Math.max(0, alloc.required - initialStock);
+    return `
+      <div data-split-row="${escapeHtml(materialId)}" style="display:grid;grid-template-columns:minmax(180px,1fr) 130px 130px;gap:10px;align-items:end;padding:12px 0;border-bottom:1px solid var(--border)">
+        <div><strong style="display:block">${escapeHtml(material.description || 'Material')}</strong><small class="muted">Necessário: ${formatQty(alloc.required)} ${escapeHtml(material.unit || 'un')}</small></div>
+        <label class="field"><span>Do estoque</span><input data-stock-allocation type="number" step="0.001" min="0" max="${alloc.required}" value="${initialStock}" required></label>
+        <label class="field"><span>Comprar</span><input data-purchase-allocation type="number" value="${initialPurchase}" readonly tabindex="-1"></label>
+      </div>`;
+  }).join('');
+}
+
+function openSplitAllocationModal(materialIds) {
+  const root = $('#modalRoot');
+  if (!root) return;
+  root.innerHTML = `
+    <div class="modal-backdrop" data-source-v2-backdrop>
+      <section class="modal" role="dialog" aria-modal="true" style="max-width:900px">
+        <header class="modal-head">
+          <div><h2>Dividir entre compra e estoque</h2><p>Informe quanto já existe no estoque. O restante será calculado para compra.</p></div>
+          <button class="icon-btn modal-close" type="button" data-source-v2-close>×</button>
+        </header>
+        <div class="modal-body">
+          <div class="import-note" style="margin-bottom:12px">Cada item continuará sendo um único material. As telas operacionais mostrarão somente a parcela correspondente a cada etapa.</div>
+          <form id="splitAllocationForm" style="max-height:55vh;overflow:auto;padding-right:6px">${splitRows(materialIds)}</form>
+          <p id="splitAllocationError" class="form-message" style="margin-top:12px" aria-live="polite"></p>
+        </div>
+        <footer class="modal-foot">
+          <button class="btn btn-ghost" type="button" data-source-v2-close>Cancelar</button>
+          <button id="saveSplitAllocation" class="btn btn-primary" type="button">Salvar divisão</button>
+        </footer>
+      </section>
+    </div>`;
+
+  const syncRow = row => {
+    const materialId = row.dataset.splitRow;
+    const required = allocation(state.materials[materialId]).required;
+    const stockInput = $('[data-stock-allocation]', row);
+    const purchaseInput = $('[data-purchase-allocation]', row);
+    const stock = clamp(number(stockInput.value), 0, required);
+    purchaseInput.value = Math.max(0, required - stock);
+  };
+
+  $$('[data-split-row]', root).forEach(row => {
+    $('[data-stock-allocation]', row).addEventListener('input', () => syncRow(row));
+  });
+  $('[data-source-v2-backdrop]', root).addEventListener('click', event => {
+    if (event.target === event.currentTarget) closeModal();
+  });
+  $$('[data-source-v2-close]', root).forEach(button => button.addEventListener('click', closeModal));
+  $('#saveSplitAllocation', root).addEventListener('click', button => {
+    const stockById = {};
+    let invalid = '';
+    $$('[data-split-row]', root).forEach(row => {
+      const materialId = row.dataset.splitRow;
+      const material = state.materials[materialId];
+      const required = allocation(material).required;
+      const stock = number($('[data-stock-allocation]', row).value);
+      if (!(stock > 0 && stock < required)) {
+        invalid = `${material.description || 'Material'}: para dividir, a quantidade de estoque precisa ser maior que zero e menor que ${formatQty(required)}.`;
+        return;
+      }
+      stockById[materialId] = stock;
+    });
+
+    if (invalid) {
+      $('#splitAllocationError', root).textContent = invalid;
+      return;
+    }
+    saveAllocations(materialIds, 'misto', stockById, button.currentTarget);
+  });
+}
+
+function allocationChanges(material, mode, stockValue, userId, timestamp) {
+  const old = allocation(material);
+  const required = old.required;
+  const stockQty = mode === 'estoque' ? required : mode === 'misto' ? clamp(number(stockValue), 0, required) : 0;
+  const purchaseQty = mode === 'compra' ? required : mode === 'misto' ? required - stockQty : 0;
+  const source = mode;
+  const base = {
+    source,
+    stockRequiredQty: stockQty,
+    purchaseRequiredQty: purchaseQty,
+    stockReservedQty: stockQty,
+    qtyReceived: clamp(number(material.qtyReceived), 0, purchaseQty),
+    updatedAt: timestamp,
+    updatedBy: userId
+  };
+
+  if (old.purchaseQty <= 0 && purchaseQty > 0) {
+    Object.assign(base, {
+      supplier: '',
+      orderNumber: '',
+      purchaseDate: '',
+      deliveryEta: '',
+      receivedDate: '',
+      receiptNotes: '',
+      qtyReceived: 0
+    });
+  }
+
+  const merged = { ...material, ...base };
+  base.status = deriveStatus(merged);
+  return base;
 }
 
 async function recalculateSummary(projectId) {
   const snapshot = await get(ref(db, `materials/${projectId}`));
-  const materials = Object.values(snapshot.val() || {});
-  const summary = {
-    total: materials.length,
-    completed: 0,
-    pending: 0,
-    comprar: 0,
-    aguardandoEntrega: 0,
-    comprasAtrasadas: 0,
-    pintura: 0,
-    pinturaAtrasada: 0,
-    separar: 0,
-    separados: 0,
-    enviados: 0,
-    progress: 0,
-    updatedAt: Date.now()
-  };
-
-  let progress = 0;
-  materials.forEach(material => {
-    if (!material.source || material.source === 'pendente') {
-      summary.pending += 1;
-      return;
-    }
-    const current = deriveStatus(material);
-    progress += stages[current] || 0;
-    if (current === 'enviado_obra') {
-      summary.completed += 1;
-      summary.enviados += 1;
-    } else summary.pending += 1;
-    if (['comprar', 'reservar_estoque'].includes(current)) summary.comprar += 1;
-    if (['aguardando_entrega', 'recebido_parcial'].includes(current)) summary.aguardandoEntrega += 1;
-    if (current === 'compra_atrasada') summary.comprasAtrasadas += 1;
-    if (['aguarda_pintura', 'em_pintura'].includes(current)) summary.pintura += 1;
-    if (current === 'pintura_atrasada') summary.pinturaAtrasada += 1;
-    if (['pronto_separar', 'separado_parcial'].includes(current)) summary.separar += 1;
-    if (current === 'separado') summary.separados += 1;
-  });
-
-  summary.progress = materials.length ? Math.round(progress / materials.length) : 0;
-  await set(ref(db, `projectSummaries/${projectId}`), summary);
+  await set(ref(db, `projectSummaries/${projectId}`), summaryForMaterials(snapshot.val() || {}));
 }
 
-async function saveSourceInBulk(materialIds, source, button) {
+async function saveAllocations(materialIds, mode, stockById, button) {
   const user = auth.currentUser;
   const projectId = state.projectId || currentProjectId();
   const validIds = materialIds.filter(materialId => state.materials[materialId]);
@@ -366,82 +394,66 @@ async function saveSourceInBulk(materialIds, source, button) {
   try {
     const timestamp = Date.now();
     const changes = {};
+    let stockTotal = 0;
+    let purchaseTotal = 0;
+
     validIds.forEach(materialId => {
+      const material = state.materials[materialId];
+      const values = allocationChanges(material, mode, stockById[materialId], user.uid, timestamp);
       const base = `materials/${projectId}/${materialId}`;
-      changes[`${base}/source`] = source;
-      changes[`${base}/status`] = deriveStatus({ ...state.materials[materialId], source });
-      changes[`${base}/updatedAt`] = timestamp;
-      changes[`${base}/updatedBy`] = user.uid;
-      changes[`${base}/sourceDecisionAt`] = timestamp;
-      changes[`${base}/sourceDecisionBy`] = user.uid;
+      Object.entries(values).forEach(([field, value]) => { changes[`${base}/${field}`] = value; });
+      stockTotal += values.stockRequiredQty;
+      purchaseTotal += values.purchaseRequiredQty;
     });
 
     await update(ref(db), changes);
-    await set(push(ref(db, `activities/${projectId}`)), {
-      type: 'origem_definida_em_lote',
-      message: `${validIds.length} item(ns) definido(s) como ${source === 'estoque' ? 'estoque' : 'compra'}`,
+    const activityRef = push(ref(db, `activities/${projectId}`));
+    const description = mode === 'compra'
+      ? 'definidos integralmente para compra'
+      : mode === 'estoque'
+        ? 'definidos integralmente para estoque'
+        : `divididos entre estoque (${formatQty(stockTotal)}) e compra (${formatQty(purchaseTotal)})`;
+    await set(activityRef, {
+      type: mode === 'misto' ? 'origem_dividida' : 'origem_em_lote',
+      message: `${validIds.length} item(ns) ${description}`,
       materialId: '',
       userId: user.uid,
       userName: user.email || 'Usuário',
       createdAt: timestamp
     });
-
-    validIds.forEach(materialId => state.selected.delete(materialId));
     await recalculateSummary(projectId);
+
+    state.selected.clear();
     closeModal();
-    toast(`${validIds.length} item(ns) marcado(s) para ${source === 'estoque' ? 'estoque' : 'compra'}.`);
-    scheduleDecorate(100);
+    toast(mode === 'misto' ? 'Divisão entre compra e estoque salva.' : 'Origem dos materiais atualizada.');
+    scheduleDecorate(120);
   } catch (error) {
-    console.error(error);
-    toast(error?.message || 'Não foi possível definir a origem em lote.', 'error');
-    button.disabled = false;
-    button.textContent = originalLabel;
+    toast(error?.message || 'Não foi possível atualizar a origem dos materiais.', 'error');
+  } finally {
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
   }
 }
 
-document.addEventListener('change', event => {
-  const checkbox = event.target.closest?.('[data-source-batch-id]');
-  if (checkbox) {
-    if (checkbox.checked) state.selected.add(checkbox.dataset.sourceBatchId);
-    else state.selected.delete(checkbox.dataset.sourceBatchId);
-    updateButtons();
-    return;
-  }
+const view = $('#view');
+if (view) new MutationObserver(() => scheduleDecorate(0)).observe(view, { childList: true });
 
+document.addEventListener('change', event => {
   if (event.target.matches?.('#globalProjectSelect')) {
     stopListening();
-    scheduleDecorate(80);
-    scheduleDecorate(350);
-    return;
-  }
-
-  if (currentRoute() === 'materiais' && event.target.closest?.('#view')) {
     scheduleDecorate(80);
   }
 });
 
 document.addEventListener('input', event => {
-  if (currentRoute() === 'materiais' && event.target.closest?.('#view')) scheduleDecorate(120);
+  if (currentRoute() === 'materiais' && event.target.closest?.('#view')) scheduleDecorate(220);
 });
 
 document.addEventListener('click', event => {
-  const routeButton = event.target.closest?.('[data-route="materiais"]');
-  if (routeButton) {
-    scheduleDecorate(80);
-    setTimeout(() => scheduleDecorate(0), 300);
-  }
+  if (event.target.closest?.('[data-route="materiais"]')) scheduleDecorate(100);
 });
 
-window.addEventListener('hashchange', () => {
-  state.selected.clear();
-  if (currentRoute() !== 'materiais') {
-    stopListening();
-    $('#sourceBatchActionsV2')?.remove();
-    return;
-  }
-  scheduleDecorate(80);
-  setTimeout(() => scheduleDecorate(0), 350);
-});
-
-scheduleDecorate(120);
-setTimeout(() => scheduleDecorate(0), 500);
+window.addEventListener('hashchange', () => scheduleDecorate(80));
+scheduleDecorate(0);
