@@ -2,7 +2,10 @@ import { getApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.
 import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
 import { allocation } from './material-flow.js?v=20260803-1648';
 
-const db = getDatabase(getApp());
+function database() {
+  return getDatabase(getApp());
+}
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -245,7 +248,7 @@ async function loadProject(id) {
   unresolvedOpen = false;
   lastRenderSignature = '';
   try {
-    const snapshot = await get(ref(db, `materials/${id}`));
+    const snapshot = await get(ref(database(), `materials/${id}`));
     if (version !== requestVersion || currentRoute() !== 'estoque') return;
     materials = Object.values(snapshot.val() || {});
     queuePatch();
