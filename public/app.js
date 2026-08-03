@@ -510,7 +510,7 @@ async function recalculateProjectSummary(projectId) {
   const materials = Object.values(snap.val() || {});
   const summary = {
     total: materials.length, completed: 0, pending: 0, committed: 0, commitmentProgress: 0,
-    comprar: 0, aguardandoEntrega: 0, comprasAtrasadas: 0,
+    definirOrigem: 0, comprar: 0, aguardandoEntrega: 0, comprasAtrasadas: 0,
     pintura: 0, pinturaAtrasada: 0, separar: 0, separados: 0,
     enviados: 0, progress: 0, updatedAt: now()
   };
@@ -533,7 +533,8 @@ async function recalculateProjectSummary(projectId) {
     else summary.pending += 1;
 
     if (status === 'enviado_obra') { summary.completed += 1; summary.enviados += 1; }
-    if (allocation.unallocatedQty > 0 || materialPurchaseNeedsAction(item)) summary.comprar += 1;
+    if (allocation.unallocatedQty > 0) summary.definirOrigem += 1;
+    else if (materialPurchaseNeedsAction(item)) summary.comprar += 1;
     if (allocation.purchaseQty > 0 && materialPurchaseCommitted(item) && received < allocation.purchaseQty) {
       if (isPast(item.deliveryEta)) summary.comprasAtrasadas += 1;
       else summary.aguardandoEntrega += 1;
@@ -556,7 +557,7 @@ function renderDashboard() {
   const projects = Object.entries(state.projects).sort((a, b) => (a[1].deadline || '9999').localeCompare(b[1].deadline || '9999'));
   const summaries = Object.values(state.summaries);
   const totalPending = summaries.reduce((sum, s) => sum + num(s.pending), 0);
-  const purchaseIssues = summaries.reduce((sum, s) => sum + num(s.comprar) + num(s.comprasAtrasadas), 0);
+  const purchaseIssues = summaries.reduce((sum, s) => sum + num(s.definirOrigem) + num(s.comprar) + num(s.comprasAtrasadas), 0);
   const paintingIssues = summaries.reduce((sum, s) => sum + num(s.pintura) + num(s.pinturaAtrasada), 0);
   const activeWorks = projects.filter(([, p]) => p.status !== 'concluida' && p.status !== 'cancelada').length;
 
@@ -565,7 +566,8 @@ function renderDashboard() {
     const s = state.summaries[id] || {};
     if (num(s.comprasAtrasadas)) alerts.push({ tone: 'danger', title: `${project.name}: ${s.comprasAtrasadas} compra(s) atrasada(s)`, text: 'Verifique o fornecedor e atualize a previsão de chegada.', projectId: id, route: 'compras' });
     if (num(s.pinturaAtrasada)) alerts.push({ tone: 'danger', title: `${project.name}: ${s.pinturaAtrasada} item(ns) com pintura atrasada`, text: 'Confirme o retorno da pintura para liberar a separação.', projectId: id, route: 'pintura' });
-    if (num(s.comprar)) alerts.push({ tone: 'warning', title: `${project.name}: ${s.comprar} item(ns) sem compra/reserva`, text: 'Há materiais que ainda precisam de uma ação inicial.', projectId: id, route: 'compras' });
+    if (num(s.definirOrigem)) alerts.push({ tone: 'warning', title: `${project.name}: ${s.definirOrigem} item(ns) sem origem definida`, text: 'Defina compra, estoque ou uma divisão entre as duas origens.', projectId: id, route: 'materiais' });
+    if (num(s.comprar)) alerts.push({ tone: 'warning', title: `${project.name}: ${s.comprar} item(ns) com compra não registrada`, text: 'Registre fornecedor, pedido e previsão de chegada.', projectId: id, route: 'compras' });
   });
 
   view.innerHTML = `
@@ -576,7 +578,7 @@ function renderDashboard() {
     <section class="grid kpi-grid">
       ${kpiCard('Obras ativas', activeWorks, `${projects.length} obra(s) cadastrada(s)`, '▣', '')}
       ${kpiCard('Itens a empenhar', totalPending, 'Sem origem definida ou compra registrada', '≡', 'warning')}
-      ${kpiCard('Compras para agir', purchaseIssues, 'Sem compra ou fora do prazo', '◎', 'danger')}
+      ${kpiCard('Origem/compras para agir', purchaseIssues, 'Sem origem, sem compra ou fora do prazo', '◎', 'danger')}
       ${kpiCard('Fluxo de pintura', paintingIssues, 'Aguardando, em andamento ou atrasado', '◒', 'info')}
     </section>
     <section class="grid dashboard-grid">
@@ -747,7 +749,7 @@ function renderMaterialQueue(route) {
       <div class="detail-score" style="--pct:${clamp(num(summary.progress), 0, 100)}%"><span>${num(summary.progress)}%</span></div>
     </section>
     <section class="flow-strip">
-      ${flowCard('Comprar / reservar', num(summary.comprar), num(summary.comprar) ? 'danger' : '')}
+      ${flowCard('Definir / comprar', num(summary.definirOrigem) + num(summary.comprar), num(summary.definirOrigem) + num(summary.comprar) ? 'danger' : '')}
       ${flowCard('Aguardando entrega', num(summary.aguardandoEntrega), '')}
       ${flowCard('Compras atrasadas', num(summary.comprasAtrasadas), num(summary.comprasAtrasadas) ? 'danger' : '')}
       ${flowCard('Em pintura', num(summary.pintura), '')}
@@ -998,6 +1000,21 @@ function openMaterialModal(materialId = '') {
       entries.stockReservedQty = 0;
       entries.qtyReceived = 0;
     }
+    const previousAllocation = materialAllocation(material);
+    const nextAllocation = materialAllocation({ ...material, ...entries });
+    const allocationChanged = previousAllocation.source !== nextAllocation.source
+      || Math.abs(previousAllocation.stockQty - nextAllocation.stockQty) > 0.000001
+      || Math.abs(previousAllocation.purchaseQty - nextAllocation.purchaseQty) > 0.000001;
+    const hasOperationalMovement = Boolean(
+      material.purchaseDate || material.orderNumber || num(material.qtyReceived) > 0
+      || num(material.paintingSentQty) > 0 || num(material.paintingReturnedQty) > 0
+      || num(material.separatedQty) > 0 || num(material.siteDeliveredQty) > 0
+    );
+    if (materialId && allocationChanged && hasOperationalMovement) {
+      setBusy(button, false);
+      toast('A divisão entre compra e estoque não pode ser alterada depois que o material já teve movimentação.', 'error');
+      return;
+    }
     const id = materialId || push(ref(db, `materials/${state.currentProjectId}`)).key;
     const payload = {
       ...material, ...entries, id, projectId: state.currentProjectId,
@@ -1110,6 +1127,20 @@ function openQuickActionModal(material, action) {
       separatedQty: 'quantidade disponível para separação',
       siteDeliveredQty: 'quantidade separada'
     };
+    const minimums = {
+      qtyReceived: num(material.qtyReceived),
+      paintingSentQty: num(material.paintingSentQty),
+      paintingReturnedQty: num(material.paintingReturnedQty),
+      separatedQty: num(material.separatedQty),
+      siteDeliveredQty: num(material.siteDeliveredQty)
+    };
+    for (const [field, minimum] of Object.entries(minimums)) {
+      if (field in data && data[field] < minimum - 0.000001) {
+        setBusy(button, false);
+        toast(`A quantidade total não pode diminuir. O valor atual é ${fmtQty(minimum)} ${material.unit || 'un'}.`, 'error');
+        return;
+      }
+    }
     for (const [field, limit] of Object.entries(limits)) {
       if (field in data && data[field] > limit + 0.000001) {
         setBusy(button, false);

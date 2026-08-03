@@ -41,7 +41,7 @@ async function reconcileSummaries(db) {
       const calculated = summaryForMaterials(materialsByProject[projectId] || {});
       const current = summariesByProject[projectId] || {};
 
-      ['pending', 'committed', 'commitmentProgress'].forEach(field => {
+      ['total', 'completed', 'pending', 'committed', 'commitmentProgress', 'definirOrigem', 'comprar', 'aguardandoEntrega', 'comprasAtrasadas', 'pintura', 'pinturaAtrasada', 'separar', 'separados', 'enviados', 'progress'].forEach(field => {
         if (number(current[field]) !== number(calculated[field])) {
           changes[`projectSummaries/${projectId}/${field}`] = calculated[field];
         }

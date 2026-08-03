@@ -340,6 +340,14 @@ function openSplitAllocationModal(materialIds) {
   });
 }
 
+function hasOperationalMovement(material = {}) {
+  return Boolean(
+    material.purchaseDate || material.orderNumber || number(material.qtyReceived) > 0
+    || number(material.paintingSentQty) > 0 || number(material.paintingReturnedQty) > 0
+    || number(material.separatedQty) > 0 || number(material.siteDeliveredQty) > 0
+  );
+}
+
 function allocationChanges(material, mode, stockValue, userId, timestamp) {
   const old = allocation(material);
   const required = old.required;
@@ -386,6 +394,20 @@ async function saveAllocations(materialIds, mode, stockById, button) {
     toast('Não foi possível localizar os itens selecionados.', 'error');
     return;
   }
+
+  for (const materialId of validIds) {
+  const material = state.materials[materialId];
+  const old = allocation(material);
+  const targetStock = mode === 'estoque' ? old.required : mode === 'misto' ? clamp(number(stockById[materialId]), 0, old.required) : 0;
+  const targetPurchase = mode === 'compra' ? old.required : mode === 'misto' ? old.required - targetStock : 0;
+  const changed = old.source !== mode
+    || Math.abs(old.stockQty - targetStock) > 0.000001
+    || Math.abs(old.purchaseQty - targetPurchase) > 0.000001;
+  if (changed && hasOperationalMovement(material)) {
+    toast(`${material.description || 'Material'} já possui movimentação e não pode ter a divisão alterada.`, 'error');
+    return;
+  }
+}
 
   const originalLabel = button.textContent;
   button.disabled = true;

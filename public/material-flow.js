@@ -84,9 +84,13 @@ export function committedQty(material = {}) {
   return clamp(stockQty + purchase, 0, required);
 }
 
+export function sourceNeedsDefinition(material = {}) {
+  return allocation(material).unallocatedQty > 0;
+}
+
 export function purchaseNeedsAction(material = {}) {
-  const { purchaseQty, unallocatedQty } = allocation(material);
-  return unallocatedQty > 0 || (purchaseQty > 0 && !purchaseCommitted(material));
+  const { purchaseQty } = allocation(material);
+  return purchaseQty > 0 && !purchaseCommitted(material);
 }
 
 export function deriveStatus(material = {}) {
@@ -154,6 +158,7 @@ export function summaryForMaterials(materials = {}) {
     pending: 0,
     committed: 0,
     commitmentProgress: 0,
+    definirOrigem: 0,
     comprar: 0,
     aguardandoEntrega: 0,
     comprasAtrasadas: 0,
@@ -191,7 +196,8 @@ export function summaryForMaterials(materials = {}) {
       summary.enviados += 1;
     }
 
-    if (purchaseNeedsAction(material)) summary.comprar += 1;
+    if (sourceNeedsDefinition(material)) summary.definirOrigem += 1;
+    else if (purchaseNeedsAction(material)) summary.comprar += 1;
     if (alloc.purchaseQty > 0 && purchaseCommitted(material) && received < alloc.purchaseQty) {
       if (isPast(material.deliveryEta)) summary.comprasAtrasadas += 1;
       else summary.aguardandoEntrega += 1;
