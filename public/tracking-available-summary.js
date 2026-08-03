@@ -83,6 +83,7 @@ function quantitySummary() {
   });
 
   return {
+    totalItems: materials.length,
     totalRequiredQty,
     availableQty,
     stockPendingItems,
@@ -124,6 +125,7 @@ function patch() {
 
   const data = quantitySummary();
   const signature = [
+    data.totalItems,
     data.totalRequiredQty,
     data.availableQty,
     data.stockPendingItems,
@@ -135,12 +137,12 @@ function patch() {
 
   lastSignature = signature;
   summary.dataset.availableSummary = signature;
-  summary.style.gridTemplateColumns = 'repeat(3,minmax(0,1fr))';
+  summary.style.gridTemplateColumns = 'repeat(4,minmax(0,1fr))';
   summary.replaceChildren(
     metric(
-      'Quantidade conferida e ainda não separada',
-      `${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)} un`,
-      'quantidade disponível na empresa'
+      'Total de itens',
+      `${data.totalItems} itens`,
+      'materiais cadastrados na obra'
     ),
     metric(
       'Itens em estoque',
@@ -151,6 +153,11 @@ function patch() {
       'Recebidos das compras',
       `${data.receivedPurchaseItems} de ${data.purchasedItems} itens`,
       'itens comprados com recebimento registrado'
+    ),
+    metric(
+      'Quantidade conferida e ainda não separada',
+      `${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)} un`,
+      'quantidade disponível na empresa'
     )
   );
 }
