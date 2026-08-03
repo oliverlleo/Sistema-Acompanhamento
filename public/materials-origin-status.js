@@ -22,6 +22,7 @@ let materials = {};
 let projectId = '';
 let stopMaterials = null;
 let customFilterActive = false;
+let bypassNativeChange = false;
 let patchQueued = false;
 
 function currentRoute() {
@@ -133,6 +134,7 @@ onAuthStateChanged(auth, user => {
   projectId = '';
   materials = {};
   customFilterActive = false;
+  bypassNativeChange = false;
   if (user) syncRoute();
 });
 
@@ -149,11 +151,20 @@ document.addEventListener('change', event => {
 
   if (target?.id !== 'statusFilter' || currentRoute() !== 'materiais') return;
 
+  if (bypassNativeChange) {
+    bypassNativeChange = false;
+    return;
+  }
+
   if (target.value === CUSTOM_FILTER) {
     customFilterActive = true;
     event.preventDefault();
     event.stopImmediatePropagation();
-    queuePatch();
+
+    bypassNativeChange = true;
+    target.value = 'todos';
+    target.dispatchEvent(new Event('change', { bubbles: true }));
+    setTimeout(queuePatch, 0);
     return;
   }
 
