@@ -96,6 +96,20 @@ function safeText(value) {
   return /^[=+\-@]/.test(text) ? `'${text}` : text;
 }
 
+function selectedMaterialIds() {
+  const ids = [];
+  const seen = new Set();
+
+  $$('#view [data-bulk-purchase-item]:checked').forEach(input => {
+    const materialId = input.dataset.bulkPurchaseItem;
+    if (!materialId || seen.has(materialId)) return;
+    seen.add(materialId);
+    ids.push(materialId);
+  });
+
+  return ids;
+}
+
 function visibleMaterialIds() {
   const ids = [];
   const seen = new Set();
@@ -133,14 +147,16 @@ function filenamePart(value) {
 
 async function exportPurchaseList(button) {
   const projectId = currentProjectId();
-  const materialIds = visibleMaterialIds();
+  const selectedIds = selectedMaterialIds();
+  const materialIds = selectedIds.length ? selectedIds : visibleMaterialIds();
+  const exportingSelection = selectedIds.length > 0;
 
   if (!projectId) {
     toast('Selecione uma obra antes de gerar a lista de compra.', 'error');
     return;
   }
   if (!materialIds.length) {
-    toast('Não há itens visíveis na fila de compras para exportar.', 'error');
+    toast('Não há itens selecionados nem itens visíveis na fila de compras para exportar.', 'error');
     return;
   }
 
@@ -167,7 +183,7 @@ async function exportPurchaseList(button) {
       .filter(row => number(row[4]) > 0);
 
     if (!rows.length) {
-      toast('Nenhum item da fila possui quantidade de compra.', 'error');
+      toast('Nenhum item escolhido possui quantidade de compra.', 'error');
       return;
     }
 
@@ -199,7 +215,9 @@ async function exportPurchaseList(button) {
     const projectLabel = $('#globalProjectSelect option:checked')?.textContent || 'Obra';
     const fileName = `Lista_de_Compra_${filenamePart(projectLabel)}_${localDateStamp()}.xlsx`;
     XLSX.writeFile(workbook, fileName, { compression: true });
-    toast(`Lista de compra gerada com ${rows.length} item(ns).`);
+    toast(exportingSelection
+      ? `Lista de compra gerada com ${rows.length} item(ns) selecionado(s).`
+      : `Lista de compra gerada com ${rows.length} item(ns) visível(is).`);
   } catch (error) {
     console.error('Falha ao gerar lista de compra:', error);
     toast('Não foi possível gerar a lista de compra em Excel.', 'error');
@@ -221,7 +239,7 @@ function injectButton() {
   button.type = 'button';
   button.className = 'btn btn-secondary';
   button.textContent = '⇩ Gerar lista de compra';
-  button.title = 'Exportar os itens visíveis desta fila para Excel';
+  button.title = 'Com itens marcados, exporta somente a seleção; sem seleção, exporta todos os itens visíveis';
   button.addEventListener('click', () => exportPurchaseList(button));
   actions.prepend(button);
 }
