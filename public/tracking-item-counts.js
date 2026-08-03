@@ -1,0 +1,242 @@
+import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
+import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
+import {
+  allocation, purchaseCommitted, availableQty, number, clamp
+} from './material-flow.js?v=20260803-0959';
+
+const firebaseConfig = {
+  apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
+  authDomain: 'sistemsquared.firebaseapp.com',
+  databaseURL: 'https://sistemsquared-default-rtdb.firebaseio.com',
+  projectId: 'sistemsquared',
+  storageBucket: 'sistemsquared.firebasestorage.app',
+  messagingSenderId: '43452051582',
+  appId: '1:43452051582:web:08a19296448eb66d0b282f'
+};
+
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+
+let projectId = '';
+let materials = [];
+let requestVersion = 0;
+let patchQueued = false;
+
+function currentRoute() {
+  return location.hash.replace(/^#/, '') || 'dashboard';
+}
+
+function formatQty(value) {
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(number(value));
+}
+
+function formatDate(value) {
+  if (!value) return '—';
+  const date = new Date(`${value}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat('pt-BR').format(date);
+}
+
+function percent(value, total) {
+  if (!(total > 0)) return { value: 0, label: '0%' };
+  const exact = clamp((value / total) * 100, 0, 100);
+  return {
+    value: exact > 0 ? Math.max(1.2, exact) : 0,
+    label: exact > 0 && exact < 1 ? '<1%' : `${Math.round(exact)}%`
+  };
+}
+
+function stageData() {
+  const totalItems = materials.length;
+  let purchaseItems = 0;
+  let purchasedItems = 0;
+  let purchaseRequiredQty = 0;
+  let purchasedQty = 0;
+  let nearestDeliveryEta = '';
+  let paintingRequiredItems = 0;
+  let inPaintingItems = 0;
+  let paintingRequiredQty = 0;
+  let inPaintingQty = 0;
+  let paintingReturnedQty = 0;
+  let nearestPaintingEta = '';
+  let checkedItems = 0;
+  let separatedItems = 0;
+
+  materials.forEach(material => {
+    const alloc = allocation(material);
+    const required = alloc.required;
+    const separated = clamp(number(material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
+    const paintSent = clamp(number(material.paintingSentQty), 0, required || Number.MAX_SAFE_INTEGER);
+    const paintReturned = clamp(number(material.paintingReturnedQty), 0, paintSent || Number.MAX_SAFE_INTEGER);
+    const inPaint = Math.max(0, paintSent - paintReturned);
+    const checkedPending = Math.max(0, availableQty(material) - inPaint - separated);
+
+    if (alloc.purchaseQty > 0) {
+      purchaseItems += 1;
+      purchaseRequiredQty += alloc.purchaseQty;
+      if (purchaseCommitted(material)) {
+        purchasedItems += 1;
+        purchasedQty += alloc.purchaseQty;
+      }
+      if (material.deliveryEta && (!nearestDeliveryEta || material.deliveryEta < nearestDeliveryEta)) {
+        nearestDeliveryEta = material.deliveryEta;
+      }
+    }
+
+    if (material.paintingRequired) {
+      paintingRequiredItems += 1;
+      paintingRequiredQty += required;
+      inPaintingQty += inPaint;
+      paintingReturnedQty += paintReturned;
+      if (inPaint > 0) inPaintingItems += 1;
+      if (inPaint > 0 && material.paintingEta && (!nearestPaintingEta || material.paintingEta < nearestPaintingEta)) {
+        nearestPaintingEta = material.paintingEta;
+      }
+    }
+
+    if (checkedPending > 0) checkedItems += 1;
+    if (separated > 0) separatedItems += 1;
+  });
+
+  return {
+    comprado: { current: purchasedItems, total: purchaseItems },
+    pintura: { current: inPaintingItems, total: paintingRequiredItems },
+    disponivel: { current: checkedItems, total: totalItems },
+    separado: { current: separatedItems, total: totalItems },
+    purchaseItems,
+    purchasedItems,
+    purchaseRequiredQty,
+    purchasedQty,
+    missingPurchaseItems: Math.max(0, purchaseItems - purchasedItems),
+    missingPurchaseQty: Math.max(0, purchaseRequiredQty - purchasedQty),
+    nearestDeliveryEta,
+    paintingRequiredItems,
+    inPaintingItems,
+    paintingRequiredQty,
+    inPaintingQty,
+    paintingReturnedQty,
+    nearestPaintingEta
+  };
+}
+
+function metric(label, value, note = '') {
+  const article = document.createElement('article');
+  article.className = 'trk-metric';
+  const labelEl = document.createElement('span');
+  labelEl.textContent = label;
+  const strong = document.createElement('strong');
+  strong.textContent = value;
+  article.append(labelEl, strong);
+  if (note) {
+    const small = document.createElement('small');
+    small.textContent = note;
+    article.appendChild(small);
+  }
+  return article;
+}
+
+function patchSummary(activeStage, data) {
+  const summary = $('.trk-summary');
+  if (!summary) return;
+
+  if (activeStage === 'comprado') {
+    summary.style.gridTemplateColumns = 'repeat(3,minmax(0,1fr))';
+    summary.replaceChildren(
+      metric('Itens comprados', `${data.purchasedItems} de ${data.purchaseItems}`),
+      metric(
+        'Quantidade comprada',
+        `${formatQty(data.purchasedQty)} un de ${formatQty(data.purchaseRequiredQty)} un`,
+        data.nearestDeliveryEta ? `Próximo prazo: ${formatDate(data.nearestDeliveryEta)}` : 'Sem prazo registrado'
+      ),
+      metric('Falta comprar', `${data.missingPurchaseItems} itens — ${formatQty(data.missingPurchaseQty)} unidades`)
+    );
+    return;
+  }
+
+  summary.style.gridTemplateColumns = '';
+  if (activeStage === 'pintura') {
+    summary.replaceChildren(
+      metric('Itens em pintura agora', `${data.inPaintingItems} de ${data.paintingRequiredItems}`),
+      metric('Quantidade em pintura', `${formatQty(data.inPaintingQty)} un de ${formatQty(data.paintingRequiredQty)} un`),
+      metric('Quantidade já retornada', `${formatQty(data.paintingReturnedQty)} un`),
+      metric('Próximo retorno', formatDate(data.nearestPaintingEta))
+    );
+  }
+}
+
+function patch() {
+  patchQueued = false;
+  if (currentRoute() !== 'estoque' || !projectId || !materials.length) return;
+  const buttons = $$('[data-tracking-stage]');
+  if (!buttons.length) return;
+
+  const data = stageData();
+  buttons.forEach(button => {
+    const key = button.dataset.trackingStage;
+    const stage = data[key];
+    if (!stage) return;
+    const pct = percent(stage.current, stage.total);
+    const donut = $('.trk-donut', button);
+    const donutLabel = $('.trk-donut strong', button);
+    const count = $('.trk-stage-copy span', button);
+    if (donut) donut.style.setProperty('--value', pct.value);
+    if (donutLabel) donutLabel.textContent = pct.label;
+    if (count) count.textContent = `${stage.current} de ${stage.total} itens`;
+  });
+
+  const activeButton = $('[data-tracking-stage].active');
+  const activeStage = activeButton?.dataset.trackingStage;
+  const stage = data[activeStage];
+  if (stage) {
+    const pct = percent(stage.current, stage.total);
+    const progressText = $('.trk-progress-head strong');
+    const progressBar = $('.trk-progress i');
+    if (progressText) progressText.textContent = `${pct.label} · ${stage.current} de ${stage.total} itens`;
+    if (progressBar) progressBar.style.width = `${pct.value}%`;
+    patchSummary(activeStage, data);
+  }
+}
+
+function queuePatch() {
+  if (patchQueued) return;
+  patchQueued = true;
+  requestAnimationFrame(() => setTimeout(patch, 0));
+}
+
+async function loadProject(id) {
+  if (!id) return;
+  const version = ++requestVersion;
+  projectId = id;
+  try {
+    const snapshot = await get(ref(db, `materials/${id}`));
+    if (version !== requestVersion || currentRoute() !== 'estoque') return;
+    materials = Object.values(snapshot.val() || {});
+    queuePatch();
+  } catch (error) {
+    console.error('Falha ao calcular acompanhamento por itens:', error);
+  }
+}
+
+document.addEventListener('click', event => {
+  const card = event.target.closest?.('[data-separated-project]');
+  if (card && currentRoute() === 'estoque') loadProject(card.dataset.separatedProject);
+  if (event.target.closest?.('[data-tracking-stage]')) queuePatch();
+}, true);
+
+document.addEventListener('keydown', event => {
+  const card = event.target.closest?.('[data-separated-project]');
+  if (card && currentRoute() === 'estoque' && (event.key === 'Enter' || event.key === ' ')) {
+    loadProject(card.dataset.separatedProject);
+  }
+}, true);
+
+new MutationObserver(queuePatch).observe(document.documentElement, { childList: true, subtree: true });
+
+window.addEventListener('hashchange', () => {
+  if (currentRoute() !== 'estoque') {
+    requestVersion += 1;
+    projectId = '';
+    materials = [];
+  }
+});
