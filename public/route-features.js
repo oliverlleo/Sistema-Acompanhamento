@@ -76,7 +76,7 @@ async function loadPurchaseExcelFeature() {
   if (loaded.excelCompras) return;
   loaded.excelCompras = true;
   try {
-    await import('./purchase-excel-export.js?v=20260803-1335');
+    await import('./purchase-excel-export.js?v=20260803-2005');
   } catch (error) {
     loaded.excelCompras = false;
     console.error('Falha ao carregar exportação da lista de compra:', error);
