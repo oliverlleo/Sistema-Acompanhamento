@@ -1,0 +1,100 @@
+name: Update separated project metrics
+
+on:
+  push:
+    paths:
+      - '.github/workflows/update-separated-card-metrics.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update separated metrics
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('public/separated-projects.js')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              if old not in text:
+                  raise SystemExit(f'Pattern not found: {label}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              "import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';\n",
+              "import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';\nimport { allocation, purchaseCommitted } from './material-flow.js?v=20260803-0959';\n",
+              'material flow import'
+          )
+
+          replace_once(
+              "  let separatedItems = 0;\n  let completedItems = 0;\n",
+              "  let separatedItems = 0;\n  let purchasedItems = 0;\n  let completedItems = 0;\n",
+              'summary counters'
+          )
+
+          replace_once(
+              "    if (separated > 0) separatedItems += 1;\n    if (required > 0 && separated >= required) completedItems += 1;\n",
+              "    if (separated > 0) separatedItems += 1;\n    const purchase = allocation(material);\n    if (purchase.purchaseQty > 0 && purchaseCommitted(material)) purchasedItems += 1;\n    if (required > 0 && separated >= required) completedItems += 1;\n",
+              'purchased count'
+          )
+
+          replace_once(
+              "    separatedItems,\n    completedItems,\n    totalItems: items.length,\n",
+              "    separatedItems,\n    purchasedItems,\n    completedItems,\n    totalItems: items.length,\n",
+              'summary result'
+          )
+
+          replace_once(
+              "      <div class=\"sep-stats\">\n        <div class=\"sep-stat\"><strong>${summary.separatedItems}</strong><span>itens iniciados</span></div>\n        <div class=\"sep-stat\"><strong>${summary.completedItems}</strong><span>concluídos</span></div>\n        <div class=\"sep-stat\"><strong>${summary.totalItems}</strong><span>itens da obra</span></div>\n      </div>",
+              "      <div class=\"sep-stats\">\n        <div class=\"sep-stat\"><strong>${summary.totalItems}</strong><span>itens da obra</span></div>\n        <div class=\"sep-stat\"><strong>${summary.purchasedItems}</strong><span>itens comprados</span></div>\n        <div class=\"sep-stat\"><strong>${summary.separatedItems}</strong><span>itens separados</span></div>\n      </div>",
+              'project card metrics'
+          )
+
+          replace_once(
+              "      <section class=\"sep-detail-summary\">\n        <article class=\"sep-detail-metric\"><span>Quantidade separada</span><strong>${formatQty(summary.separatedQty)}</strong></article>\n        <article class=\"sep-detail-metric\"><span>Quantidade necessária</span><strong>${formatQty(summary.requiredQty)}</strong></article>\n        <article class=\"sep-detail-metric\"><span>Itens com separação</span><strong>${summary.separatedItems}</strong></article>\n        <article class=\"sep-detail-metric\"><span>Itens concluídos</span><strong>${summary.completedItems}</strong></article>\n      </section>",
+              "      <section class=\"sep-detail-summary\">\n        <article class=\"sep-detail-metric\"><span>Itens da obra</span><strong>${summary.totalItems}</strong></article>\n        <article class=\"sep-detail-metric\"><span>Itens comprados</span><strong>${summary.purchasedItems}</strong></article>\n        <article class=\"sep-detail-metric\"><span>Itens separados</span><strong>${summary.separatedItems}</strong></article>\n        <article class=\"sep-detail-metric\"><span>Quantidade separada</span><strong>${formatQty(summary.separatedQty)} / ${formatQty(summary.requiredQty)}</strong></article>\n      </section>",
+              'detail metrics'
+          )
+
+          path.write_text(text, encoding='utf-8')
+
+          route = Path('public/route-features.js')
+          route_text = route.read_text(encoding='utf-8')
+          old = "await import('./separated-projects.js?v=20260803-1430');"
+          new = "await import('./separated-projects.js?v=20260803-1442');"
+          if old not in route_text:
+              raise SystemExit('Pattern not found: separated module cache')
+          route.write_text(route_text.replace(old, new, 1), encoding='utf-8')
+
+          index = Path('public/index.html')
+          index_text = index.read_text(encoding='utf-8')
+          old_versions = ['20260803-1430', '20260803-1348']
+          changed = False
+          for version in old_versions:
+              needle = f'./route-features.js?v={version}'
+              if needle in index_text:
+                  index_text = index_text.replace(needle, './route-features.js?v=20260803-1442', 1)
+                  changed = True
+                  break
+          if not changed:
+              raise SystemExit('Pattern not found: route features cache')
+          index.write_text(index_text, encoding='utf-8')
+          PY
+
+          node --check public/separated-projects.js
+          node --check public/route-features.js
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/separated-projects.js public/route-features.js public/index.html
+          git commit -m "Show useful purchase and separation counts" || exit 0
+          git push
