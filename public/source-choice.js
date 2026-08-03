@@ -1,3 +1,4 @@
+import { quantityNumber } from './material-flow.js?v=20260803-1648';
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
 import {
@@ -67,14 +68,14 @@ function isPast(date) {
 function deriveStatus(material) {
   if (material.source === 'pendente' || !material.source) return 'comprar';
 
-  const required = Math.max(0, num(material.qtyRequired));
-  const delivered = num(material.siteDeliveredQty);
-  const separated = num(material.separatedQty);
-  const received = num(material.qtyReceived);
-  const reserved = num(material.stockReservedQty);
+  const required = Math.max(0, quantityNumber(material, material.qtyRequired));
+  const delivered = quantityNumber(material, material.siteDeliveredQty);
+  const separated = quantityNumber(material, material.separatedQty);
+  const received = quantityNumber(material, material.qtyReceived);
+  const reserved = quantityNumber(material, material.stockReservedQty);
   const available = material.source === 'estoque' ? reserved : received;
-  const paintSent = num(material.paintingSentQty);
-  const paintReturned = num(material.paintingReturnedQty);
+  const paintSent = quantityNumber(material, material.paintingSentQty);
+  const paintReturned = quantityNumber(material, material.paintingReturnedQty);
 
   if (required > 0 && delivered >= required) return 'enviado_obra';
   if (delivered > 0) return 'enviado_parcial';

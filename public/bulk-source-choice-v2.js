@@ -6,8 +6,7 @@ import {
   clamp,
   deriveStatus,
   number,
-  summaryForMaterials
-} from './material-flow.js?v=20260803-0959';
+  summaryForMaterials, quantityNumber} from './material-flow.js?v=20260803-1648';
 
 const config = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
@@ -342,9 +341,9 @@ function openSplitAllocationModal(materialIds) {
 
 function hasOperationalMovement(material = {}) {
   return Boolean(
-    material.purchaseDate || material.orderNumber || number(material.qtyReceived) > 0
-    || number(material.paintingSentQty) > 0 || number(material.paintingReturnedQty) > 0
-    || number(material.separatedQty) > 0 || number(material.siteDeliveredQty) > 0
+    material.purchaseDate || material.orderNumber || quantityNumber(material, material.qtyReceived) > 0
+    || quantityNumber(material, material.paintingSentQty) > 0 || quantityNumber(material, material.paintingReturnedQty) > 0
+    || quantityNumber(material, material.separatedQty) > 0 || quantityNumber(material, material.siteDeliveredQty) > 0
   );
 }
 
@@ -359,7 +358,7 @@ function allocationChanges(material, mode, stockValue, userId, timestamp) {
     stockRequiredQty: stockQty,
     purchaseRequiredQty: purchaseQty,
     stockReservedQty: stockQty,
-    qtyReceived: clamp(number(material.qtyReceived), 0, purchaseQty),
+    qtyReceived: clamp(quantityNumber(material, material.qtyReceived), 0, purchaseQty),
     updatedAt: timestamp,
     updatedBy: userId
   };

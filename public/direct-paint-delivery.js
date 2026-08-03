@@ -1,3 +1,4 @@
+import { quantityNumber } from './material-flow.js?v=20260803-1648';
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
 import { getDatabase, ref, onValue, update, push, set } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
@@ -61,16 +62,16 @@ function currentRoute() {
 }
 
 function allocation(material = {}) {
-  const required = Math.max(0, number(material.qtyRequired));
+  const required = Math.max(0, quantityNumber(material, material.qtyRequired));
   const source = material.source || 'pendente';
   if (source === 'estoque') return { required, stockQty: required, purchaseQty: 0 };
   if (source === 'compra') return { required, stockQty: 0, purchaseQty: required };
   if (source === 'misto') {
-    const stockQty = clamp(number(material.stockRequiredQty), 0, required);
+    const stockQty = clamp(quantityNumber(material, material.stockRequiredQty), 0, required);
     const purchaseQty = clamp(
       material.purchaseRequiredQty === undefined || material.purchaseRequiredQty === null || material.purchaseRequiredQty === ''
         ? required - stockQty
-        : number(material.purchaseRequiredQty),
+        : quantityNumber(material, material.purchaseRequiredQty),
       0,
       required - stockQty
     );
@@ -88,18 +89,18 @@ function directToPainting(material = {}) {
 }
 
 function directDelivered(material = {}) {
-  return clamp(number(material.directPaintingDeliveredQty), 0, allocation(material).purchaseQty);
+  return clamp(quantityNumber(material, material.directPaintingDeliveredQty), 0, allocation(material).purchaseQty);
 }
 
 function deriveLegacyStatus(material = {}) {
   const alloc = allocation(material);
   const required = alloc.required;
-  const received = clamp(number(material.qtyReceived), 0, alloc.purchaseQty);
+  const received = clamp(quantityNumber(material, material.qtyReceived), 0, alloc.purchaseQty);
   const available = clamp(alloc.stockQty + received, 0, required);
-  const sent = clamp(number(material.paintingSentQty), 0, available || Number.MAX_SAFE_INTEGER);
-  const returned = clamp(number(material.paintingReturnedQty), 0, sent || Number.MAX_SAFE_INTEGER);
-  const separated = number(material.separatedQty);
-  const delivered = number(material.siteDeliveredQty);
+  const sent = clamp(quantityNumber(material, material.paintingSentQty), 0, available || Number.MAX_SAFE_INTEGER);
+  const returned = clamp(quantityNumber(material, material.paintingReturnedQty), 0, sent || Number.MAX_SAFE_INTEGER);
+  const separated = quantityNumber(material, material.separatedQty);
+  const delivered = quantityNumber(material, material.siteDeliveredQty);
 
   if (required > 0 && delivered >= required) return 'enviado_obra';
   if (delivered > 0) return 'enviado_parcial';
@@ -305,7 +306,7 @@ function openDirectDeliveryModal(material) {
     if (!form?.reportValidity()) return;
     const button = event.currentTarget;
     const data = Object.fromEntries(new FormData(form).entries());
-    const quantity = number(data.directPaintingDeliveredQty);
+    const quantity = quantityNumber(material, data.directPaintingDeliveredQty);
 
     if (quantity < previousDirect - 0.000001) {
       toast(`A quantidade total não pode diminuir. O valor atual é ${formatQty(previousDirect)} ${material.unit || 'un'}.`, 'error');
@@ -321,7 +322,7 @@ function openDirectDeliveryModal(material) {
     button.textContent = 'Salvando...';
 
     try {
-      const internalPaintingSent = Math.max(0, number(material.paintingSentQty) - previousDirect);
+      const internalPaintingSent = Math.max(0, quantityNumber(material, material.paintingSentQty) - previousDirect);
       const paintingSentQty = clamp(internalPaintingSent + quantity, 0, alloc.required);
       const merged = {
         ...material,
@@ -426,12 +427,12 @@ async function applyBulkIntent() {
 
 function movementExists(material = {}) {
   return Boolean(
-    number(material.qtyReceived) > 0
-    || number(material.directPaintingDeliveredQty) > 0
-    || number(material.paintingSentQty) > 0
-    || number(material.paintingReturnedQty) > 0
-    || number(material.separatedQty) > 0
-    || number(material.siteDeliveredQty) > 0
+    quantityNumber(material, material.qtyReceived) > 0
+    || quantityNumber(material, material.directPaintingDeliveredQty) > 0
+    || quantityNumber(material, material.paintingSentQty) > 0
+    || quantityNumber(material, material.paintingReturnedQty) > 0
+    || quantityNumber(material, material.separatedQty) > 0
+    || quantityNumber(material, material.siteDeliveredQty) > 0
   );
 }
 

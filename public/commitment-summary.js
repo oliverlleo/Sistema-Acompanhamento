@@ -1,7 +1,7 @@
 import { getApps, getApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
 import { getDatabase, ref, onValue, update } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
-import { summaryForMaterials, number } from './material-flow.js?v=20260803-0959';
+import { summaryForMaterials, number, quantityNumber} from './material-flow.js?v=20260803-1648';
 
 let materialsByProject = {};
 let summariesByProject = {};

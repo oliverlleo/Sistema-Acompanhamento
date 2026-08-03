@@ -1,7 +1,7 @@
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
 import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
-import { allocation, purchaseCommitted } from './material-flow.js?v=20260803-0959';
+import { allocation, purchaseCommitted, quantityNumber} from './material-flow.js?v=20260803-1648';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
@@ -129,8 +129,8 @@ function separationSummary(items = []) {
   let completedItems = 0;
 
   items.forEach(material => {
-    const required = Math.max(0, number(material.qtyRequired));
-    const separated = clamp(number(material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
+    const required = Math.max(0, quantityNumber(material, material.qtyRequired));
+    const separated = clamp(quantityNumber(material, material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
     const categoryName = String(material.category || 'Sem categoria').trim() || 'Sem categoria';
     const current = categories.get(categoryName) || {
       name: categoryName,
@@ -178,9 +178,9 @@ function separationSummary(items = []) {
 }
 
 function statusForMaterial(material) {
-  const required = Math.max(0, number(material.qtyRequired));
-  const separated = number(material.separatedQty);
-  const delivered = number(material.siteDeliveredQty);
+  const required = Math.max(0, quantityNumber(material, material.qtyRequired));
+  const separated = quantityNumber(material, material.separatedQty);
+  const delivered = quantityNumber(material, material.siteDeliveredQty);
 
   if (required > 0 && delivered >= required) return ['Enviado para obra', 'sent'];
   if (delivered > 0) return ['Envio parcial', 'partial'];
@@ -342,7 +342,7 @@ function projectCard(projectId, project) {
       <div class="sep-category-preview">${categories}</div>
       ${remaining ? `<span class="sep-more">+ ${remaining} categoria${remaining === 1 ? '' : 's'}</span>` : ''}
       <div class="sep-card-foot">
-        <span class="sep-qty-summary">${formatQty(summary.separatedQty)} de ${formatQty(summary.requiredQty)} separados</span>
+        <span class="sep-qty-summary">${formatQty(quantityNumber(summary, summary.separatedQty))} de ${formatQty(quantityNumber(summary, summary.requiredQty))} separados</span>
         <span class="sep-open">Ver detalhes ${arrowIcon()}</span>
       </div>
     </article>`;
@@ -427,9 +427,9 @@ function materialSearchText(material) {
 }
 
 function materialRow(material) {
-  const required = Math.max(0, number(material.qtyRequired));
-  const separated = clamp(number(material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
-  const delivered = clamp(number(material.siteDeliveredQty), 0, separated || Number.MAX_SAFE_INTEGER);
+  const required = Math.max(0, quantityNumber(material, material.qtyRequired));
+  const separated = clamp(quantityNumber(material, material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
+  const delivered = clamp(quantityNumber(material, material.siteDeliveredQty), 0, separated || Number.MAX_SAFE_INTEGER);
   const percent = percentMeta(separated, required);
   const [statusLabel, statusTone] = statusForMaterial(material);
 
@@ -476,7 +476,7 @@ function renderProjectDetail(view, projectId) {
 
   const allItems = projectMaterials(projectId);
   const separatedItems = allItems
-    .filter(material => number(material.separatedQty) > 0)
+    .filter(material => quantityNumber(material, material.separatedQty) > 0)
     .sort((a, b) => {
       const category = String(a.category || '').localeCompare(String(b.category || ''), 'pt-BR');
       return category || String(a.description || '').localeCompare(String(b.description || ''), 'pt-BR');
@@ -506,7 +506,7 @@ function renderProjectDetail(view, projectId) {
         <article class="sep-detail-metric"><span>Itens da obra</span><strong>${summary.totalItems}</strong></article>
         <article class="sep-detail-metric"><span>Itens comprados</span><strong>${summary.purchasedItems}</strong></article>
         <article class="sep-detail-metric"><span>Itens separados</span><strong>${summary.separatedItems}</strong></article>
-        <article class="sep-detail-metric"><span>Quantidade separada</span><strong>${formatQty(summary.separatedQty)} / ${formatQty(summary.requiredQty)}</strong></article>
+        <article class="sep-detail-metric"><span>Quantidade separada</span><strong>${formatQty(quantityNumber(summary, summary.separatedQty))} / ${formatQty(quantityNumber(summary, summary.requiredQty))}</strong></article>
       </section>
       ${categoryStrip ? `<section class="sep-category-strip" aria-label="Progresso por categoria">${categoryStrip}</section>` : ''}
       ${separatedItems.length ? `
