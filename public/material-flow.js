@@ -8,6 +8,7 @@ export const STAGES = {
   aguarda_pintura: 48,
   em_pintura: 60,
   pintura_atrasada: 60,
+  pintura_retorno_parcial: 68,
   pronto_separar: 74,
   separado_parcial: 80,
   separado: 90,
@@ -53,22 +54,43 @@ export function allocation(material = {}) {
   return { required, source, stockQty: 0, purchaseQty: 0, unallocatedQty: required };
 }
 
+export function deliveryToPainting(material = {}) {
+  const { purchaseQty } = allocation(material);
+  return Boolean(material.paintingRequired && purchaseQty > 0 && material.purchaseDeliveryDestination === 'pintura');
+}
+
+export function directPaintingDeliveredQty(material = {}) {
+  const { purchaseQty } = allocation(material);
+  if (!deliveryToPainting(material)) return 0;
+  return clamp(number(material.directPaintingDeliveredQty), 0, purchaseQty);
+}
+
 export function purchaseCommitted(material = {}) {
   const { purchaseQty } = allocation(material);
   if (purchaseQty <= 0) return true;
   if (material.purchaseDate || material.orderNumber) return true;
-  if (number(material.qtyReceived) > 0) return true;
-  return ['aguardando_entrega', 'compra_atrasada', 'recebido_parcial'].includes(material.status);
+  if (number(material.qtyReceived) > 0 || number(material.directPaintingDeliveredQty) > 0) return true;
+  return ['aguardando_entrega', 'compra_atrasada', 'recebido_parcial', 'em_pintura', 'pintura_atrasada', 'pintura_retorno_parcial'].includes(material.status);
 }
 
 export function receivedPurchaseQty(material = {}) {
   const { purchaseQty } = allocation(material);
-  return clamp(number(material.qtyReceived), 0, purchaseQty);
+  const delivered = deliveryToPainting(material)
+    ? directPaintingDeliveredQty(material)
+    : number(material.qtyReceived);
+  return clamp(delivered, 0, purchaseQty);
 }
 
 export function availableQty(material = {}) {
   const { required, stockQty } = allocation(material);
   return clamp(stockQty + receivedPurchaseQty(material), 0, required);
+}
+
+export function paintingSentQty(material = {}) {
+  const available = availableQty(material);
+  const internalSent = Math.max(0, number(material.paintingSentQty));
+  const directSent = directPaintingDeliveredQty(material);
+  return clamp(internalSent + directSent, 0, available);
 }
 
 export function separableQty(material = {}) {
@@ -99,7 +121,7 @@ export function deriveStatus(material = {}) {
   const separated = clamp(number(material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
   const received = receivedPurchaseQty(material);
   const available = availableQty(material);
-  const paintSent = clamp(number(material.paintingSentQty), 0, available || Number.MAX_SAFE_INTEGER);
+  const paintSent = paintingSentQty(material);
   const paintReturned = clamp(number(material.paintingReturnedQty), 0, paintSent || Number.MAX_SAFE_INTEGER);
 
   if (required > 0 && delivered >= required) return 'enviado_obra';
@@ -109,7 +131,7 @@ export function deriveStatus(material = {}) {
 
   if (material.paintingRequired) {
     if (required > 0 && paintReturned >= required) return 'pronto_separar';
-    if (paintReturned > 0) return 'pronto_separar';
+    if (paintReturned > 0) return 'pintura_retorno_parcial';
     if (paintSent > 0) return isPast(material.paintingEta) ? 'pintura_atrasada' : 'em_pintura';
   }
 
@@ -131,7 +153,7 @@ export function deriveStatus(material = {}) {
 
 export function progress(material = {}) {
   const status = deriveStatus(material);
-  if (['enviado_obra', 'enviado_parcial', 'separado', 'separado_parcial', 'em_pintura', 'pintura_atrasada', 'pronto_separar'].includes(status)) {
+  if (['enviado_obra', 'enviado_parcial', 'separado', 'separado_parcial', 'em_pintura', 'pintura_atrasada', 'pintura_retorno_parcial', 'pronto_separar'].includes(status)) {
     return STAGES[status] ?? 0;
   }
 
@@ -142,8 +164,11 @@ export function progress(material = {}) {
   let purchaseStage = 0;
   if (purchaseQty > 0 && purchaseCommitted(material)) {
     const received = receivedPurchaseQty(material);
-    if (received >= purchaseQty) purchaseStage = material.paintingRequired ? STAGES.aguarda_pintura : STAGES.pronto_separar;
-    else if (received > 0) purchaseStage = STAGES.recebido_parcial;
+    if (received >= purchaseQty) {
+      purchaseStage = material.paintingRequired
+        ? (deliveryToPainting(material) ? STAGES.em_pintura : STAGES.aguarda_pintura)
+        : STAGES.pronto_separar;
+    } else if (received > 0) purchaseStage = STAGES.recebido_parcial;
     else purchaseStage = STAGES.aguardando_entrega;
   }
 
@@ -183,6 +208,7 @@ export function summaryForMaterials(materials = {}) {
     const delivered = number(material.siteDeliveredQty);
     const separable = separableQty(material);
     const committed = committedQty(material);
+    const paintSent = paintingSentQty(material);
 
     progressSum += progress(material);
     requiredSum += alloc.required;
@@ -205,7 +231,7 @@ export function summaryForMaterials(materials = {}) {
 
     if (material.paintingRequired && !['separado', 'enviado_parcial', 'enviado_obra'].includes(status)) {
       if (status === 'pintura_atrasada') summary.pinturaAtrasada += 1;
-      else if (availableQty(material) > 0 || number(material.paintingSentQty) > 0) summary.pintura += 1;
+      else if (availableQty(material) > 0 || paintSent > 0) summary.pintura += 1;
     }
 
     if (separable > separated || (separated > delivered && delivered < alloc.required)) summary.separar += 1;
