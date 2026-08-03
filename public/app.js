@@ -60,6 +60,7 @@ const STATUS = {
   aguardando_entrega: { label: 'Aguardando entrega', tone: 'info', stage: 25 },
   compra_atrasada: { label: 'Compra atrasada', tone: 'danger', stage: 25 },
   recebido_parcial: { label: 'Recebido parcialmente', tone: 'warning', stage: 38 },
+  atendimento_parcial: { label: 'Atendimento parcial', tone: 'warning', stage: 50 },
   aguarda_pintura: { label: 'Aguardando pintura', tone: 'violet', stage: 48 },
   em_pintura: { label: 'Em pintura', tone: 'violet', stage: 60 },
   pintura_atrasada: { label: 'Pintura atrasada', tone: 'danger', stage: 60 },
@@ -74,7 +75,7 @@ const ROUTES = {
   dashboard: ['Visão geral', 'Acompanhamento completo das obras'],
   obras: ['Obras', 'Cadastre e acompanhe cada obra separadamente'],
   materiais: ['Materiais', 'Visão completa de cada item e de todas as etapas'],
-  compras: ['Compras', 'Itens que precisam ser comprados ou ainda não chegaram'],
+  compras: ['Compras', 'Parcelas de compra que ainda precisam ser registradas'],
   recebimento: ['Recebimento', 'Confirmação das entregas e quantidades recebidas'],
   pintura: ['Pintura', 'Envio, prazo e retorno dos itens que exigem pintura'],
   separacao: ['Separação', 'Materiais disponíveis que precisam ser separados para a obra'],
@@ -116,13 +117,61 @@ function statusPill(status) {
   return `<span class="status-pill status-${meta.tone}">${escapeHtml(meta.label)}</span>`;
 }
 
-function deriveMaterialStatus(material) {
+function materialAllocation(material) {
   const required = Math.max(0, num(material.qtyRequired));
+  const source = material.source || 'pendente';
+  if (source === 'estoque') return { required, source, stockQty: required, purchaseQty: 0, unallocatedQty: 0 };
+  if (source === 'compra') return { required, source, stockQty: 0, purchaseQty: required, unallocatedQty: 0 };
+  if (source === 'misto') {
+    const stockQty = clamp(num(material.stockRequiredQty), 0, required);
+    const hasPurchase = material.purchaseRequiredQty !== undefined && material.purchaseRequiredQty !== null && material.purchaseRequiredQty !== '';
+    const purchaseQty = clamp(hasPurchase ? num(material.purchaseRequiredQty) : required - stockQty, 0, required - stockQty);
+    return { required, source, stockQty, purchaseQty, unallocatedQty: Math.max(0, required - stockQty - purchaseQty) };
+  }
+  return { required, source, stockQty: 0, purchaseQty: 0, unallocatedQty: required };
+}
+
+function materialPurchaseCommitted(material) {
+  const { purchaseQty } = materialAllocation(material);
+  if (purchaseQty <= 0) return true;
+  if (material.purchaseDate || material.orderNumber || num(material.qtyReceived) > 0) return true;
+  return ['aguardando_entrega', 'compra_atrasada', 'recebido_parcial'].includes(material.status);
+}
+
+function materialReceivedPurchaseQty(material) {
+  const { purchaseQty } = materialAllocation(material);
+  return clamp(num(material.qtyReceived), 0, purchaseQty);
+}
+
+function materialAvailableQty(material) {
+  const { required, stockQty } = materialAllocation(material);
+  return clamp(stockQty + materialReceivedPurchaseQty(material), 0, required);
+}
+
+function materialSeparableQty(material) {
+  const { required } = materialAllocation(material);
+  const available = materialAvailableQty(material);
+  if (!material.paintingRequired) return available;
+  return clamp(num(material.paintingReturnedQty), 0, Math.min(required, available));
+}
+
+function materialCommittedQty(material) {
+  const { required, stockQty, purchaseQty } = materialAllocation(material);
+  const purchased = purchaseQty > 0 && materialPurchaseCommitted(material) ? purchaseQty : 0;
+  return clamp(stockQty + purchased, 0, required);
+}
+
+function materialPurchaseNeedsAction(material) {
+  const { purchaseQty } = materialAllocation(material);
+  return purchaseQty > 0 && !materialPurchaseCommitted(material);
+}
+
+function deriveMaterialStatus(material) {
+  const { required, stockQty, purchaseQty, unallocatedQty } = materialAllocation(material);
   const delivered = num(material.siteDeliveredQty);
   const separated = num(material.separatedQty);
-  const received = num(material.qtyReceived);
-  const reserved = num(material.stockReservedQty);
-  const available = material.source === 'estoque' ? reserved : received;
+  const received = materialReceivedPurchaseQty(material);
+  const available = materialAvailableQty(material);
   const paintSent = num(material.paintingSentQty);
   const paintReturned = num(material.paintingReturnedQty);
 
@@ -133,19 +182,40 @@ function deriveMaterialStatus(material) {
 
   if (material.paintingRequired) {
     if (required > 0 && paintReturned >= required) return 'pronto_separar';
-    if (paintReturned > 0 && paintReturned >= Math.min(required || paintSent, paintSent || required)) return 'pronto_separar';
+    if (paintReturned > 0) return 'pronto_separar';
     if (paintSent > 0) return isPast(material.paintingEta) ? 'pintura_atrasada' : 'em_pintura';
   }
 
   if (required > 0 && available >= required) return material.paintingRequired ? 'aguarda_pintura' : 'pronto_separar';
-  if (available > 0) return 'recebido_parcial';
-  if (material.source === 'estoque') return 'pronto_separar';
-  if (!material.purchaseDate && !material.orderNumber) return 'comprar';
-  return isPast(material.deliveryEta) ? 'compra_atrasada' : 'aguardando_entrega';
+  if (available > 0) {
+    if (unallocatedQty > 0 || (purchaseQty > 0 && !materialPurchaseCommitted(material))) return 'atendimento_parcial';
+    return material.paintingRequired ? 'aguarda_pintura' : 'recebido_parcial';
+  }
+  if (unallocatedQty > 0) return 'comprar';
+  if (purchaseQty > 0) {
+    if (!materialPurchaseCommitted(material)) return 'comprar';
+    if (received < purchaseQty) return isPast(material.deliveryEta) ? 'compra_atrasada' : 'aguardando_entrega';
+  }
+  if (stockQty > 0) return material.paintingRequired ? 'aguarda_pintura' : 'pronto_separar';
+  return 'comprar';
 }
 
 function progressForMaterial(material) {
-  return statusMeta(material.status || deriveMaterialStatus(material)).stage;
+  const status = material.status || deriveMaterialStatus(material);
+  if (['enviado_obra', 'enviado_parcial', 'separado', 'separado_parcial', 'em_pintura', 'pintura_atrasada', 'pronto_separar'].includes(status)) {
+    return statusMeta(status).stage;
+  }
+  const { required, stockQty, purchaseQty } = materialAllocation(material);
+  if (!required) return statusMeta(status).stage;
+  const stockStage = stockQty > 0 ? statusMeta(material.paintingRequired ? 'aguarda_pintura' : 'pronto_separar').stage : 0;
+  let purchaseStage = 0;
+  if (purchaseQty > 0 && materialPurchaseCommitted(material)) {
+    const received = materialReceivedPurchaseQty(material);
+    if (received >= purchaseQty) purchaseStage = statusMeta(material.paintingRequired ? 'aguarda_pintura' : 'pronto_separar').stage;
+    else if (received > 0) purchaseStage = statusMeta('recebido_parcial').stage;
+    else purchaseStage = statusMeta('aguardando_entrega').stage;
+  }
+  return Math.round(((stockQty * stockStage) + (purchaseQty * purchaseStage)) / required);
 }
 
 function nextAction(material) {
@@ -156,6 +226,7 @@ function nextAction(material) {
     aguardando_entrega: ['Confirmar chegada', 'receive'],
     compra_atrasada: ['Confirmar chegada', 'receive'],
     recebido_parcial: [material.paintingRequired ? 'Enviar para pintura' : 'Confirmar chegada', material.paintingRequired ? 'send-paint' : 'receive'],
+    atendimento_parcial: ['Registrar compra', 'purchase'],
     aguarda_pintura: ['Enviar para pintura', 'send-paint'],
     em_pintura: ['Registrar retorno', 'return-paint'],
     pintura_atrasada: ['Registrar retorno', 'return-paint'],
@@ -438,26 +509,44 @@ async function recalculateProjectSummary(projectId) {
   const snap = await get(ref(db, `materials/${projectId}`));
   const materials = Object.values(snap.val() || {});
   const summary = {
-    total: materials.length, completed: 0, pending: 0,
+    total: materials.length, completed: 0, pending: 0, committed: 0, commitmentProgress: 0,
     comprar: 0, aguardandoEntrega: 0, comprasAtrasadas: 0,
     pintura: 0, pinturaAtrasada: 0, separar: 0, separados: 0,
     enviados: 0, progress: 0, updatedAt: now()
   };
   let progressSum = 0;
+  let requiredSum = 0;
+  let committedSum = 0;
   materials.forEach(item => {
+    const allocation = materialAllocation(item);
     const status = deriveMaterialStatus(item);
-    progressSum += statusMeta(status).stage;
-    if (status === 'enviado_obra') { summary.completed += 1; summary.enviados += 1; }
+    const received = materialReceivedPurchaseQty(item);
+    const committed = materialCommittedQty(item);
+    const separated = num(item.separatedQty);
+    const delivered = num(item.siteDeliveredQty);
+    const separable = materialSeparableQty(item);
+
+    progressSum += progressForMaterial(item);
+    requiredSum += allocation.required;
+    committedSum += committed;
+    if (allocation.required > 0 && committed >= allocation.required) summary.committed += 1;
     else summary.pending += 1;
-    if (status === 'comprar' || status === 'reservar_estoque') summary.comprar += 1;
-    if (['aguardando_entrega', 'recebido_parcial'].includes(status)) summary.aguardandoEntrega += 1;
-    if (status === 'compra_atrasada') summary.comprasAtrasadas += 1;
-    if (['aguarda_pintura', 'em_pintura'].includes(status)) summary.pintura += 1;
-    if (status === 'pintura_atrasada') summary.pinturaAtrasada += 1;
-    if (['pronto_separar', 'separado_parcial'].includes(status)) summary.separar += 1;
-    if (status === 'separado') summary.separados += 1;
+
+    if (status === 'enviado_obra') { summary.completed += 1; summary.enviados += 1; }
+    if (allocation.unallocatedQty > 0 || materialPurchaseNeedsAction(item)) summary.comprar += 1;
+    if (allocation.purchaseQty > 0 && materialPurchaseCommitted(item) && received < allocation.purchaseQty) {
+      if (isPast(item.deliveryEta)) summary.comprasAtrasadas += 1;
+      else summary.aguardandoEntrega += 1;
+    }
+    if (item.paintingRequired && !['separado', 'enviado_parcial', 'enviado_obra'].includes(status)) {
+      if (status === 'pintura_atrasada') summary.pinturaAtrasada += 1;
+      else if (materialAvailableQty(item) > 0 || num(item.paintingSentQty) > 0) summary.pintura += 1;
+    }
+    if (separable > separated || (separated > delivered && delivered < allocation.required)) summary.separar += 1;
+    if (allocation.required > 0 && separated >= allocation.required && delivered < allocation.required) summary.separados += 1;
   });
   summary.progress = materials.length ? Math.round(progressSum / materials.length) : 0;
+  summary.commitmentProgress = requiredSum ? Math.round((committedSum / requiredSum) * 100) : 0;
   await set(ref(db, `projectSummaries/${projectId}`), summary);
 }
 
@@ -486,7 +575,7 @@ function renderDashboard() {
     </div>
     <section class="grid kpi-grid">
       ${kpiCard('Obras ativas', activeWorks, `${projects.length} obra(s) cadastrada(s)`, '▣', '')}
-      ${kpiCard('Itens pendentes', totalPending, 'Ainda não enviados para a obra', '≡', 'warning')}
+      ${kpiCard('Itens a empenhar', totalPending, 'Sem origem definida ou compra registrada', '≡', 'warning')}
       ${kpiCard('Compras para agir', purchaseIssues, 'Sem compra ou fora do prazo', '◎', 'danger')}
       ${kpiCard('Fluxo de pintura', paintingIssues, 'Aguardando, em andamento ou atrasado', '◒', 'info')}
     </section>
@@ -518,7 +607,7 @@ function projectRow(id, project) {
   const urgency = num(s.comprasAtrasadas) + num(s.pinturaAtrasada);
   return `<div class="project-row" data-project-open="${id}">
     <div class="project-name"><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(project.code || 'Sem código')} · Prazo ${fmtDate(project.deadline)}</small></div>
-    <div><div class="progress"><span style="width:${clamp(num(s.progress), 0, 100)}%"></span></div><div class="progress-meta"><span>${num(s.progress)}%</span><span>${num(s.pending)} pendente(s)</span></div></div>
+    <div><div class="progress"><span style="width:${clamp(num(s.progress), 0, 100)}%"></span></div><div class="progress-meta"><span>${num(s.progress)}%</span><span>${num(s.pending)} a empenhar</span></div></div>
     <div>${urgency ? `<span class="status-pill status-danger">${urgency} atraso(s)</span>` : `<span class="status-pill status-ok">No prazo</span>`}</div>
     <div class="right"><button class="btn btn-ghost btn-sm">Abrir →</button></div>
   </div>`;
@@ -541,7 +630,7 @@ function projectCard(id, project) {
   return `<article class="card project-card" data-project-open="${id}">
     <div class="project-card-head"><div><span class="project-code">${escapeHtml(project.code || 'SEM CÓDIGO')}</span><h3>${escapeHtml(project.name)}</h3><p>${escapeHtml(project.client || project.address || 'Cliente não informado')}</p></div><button class="icon-btn" data-edit-project="${id}" aria-label="Editar obra">⋯</button></div>
     <div class="progress"><span style="width:${clamp(num(s.progress), 0, 100)}%"></span></div><div class="progress-meta"><span>${num(s.progress)}% concluído</span><span>Prazo ${fmtDate(project.deadline)}</span></div>
-    <div class="project-stats"><div class="project-stat"><strong>${num(s.total)}</strong><span>Itens</span></div><div class="project-stat"><strong>${num(s.pending)}</strong><span>Pendentes</span></div><div class="project-stat"><strong>${urgency}</strong><span>Atrasos</span></div></div>
+    <div class="project-stats"><div class="project-stat"><strong>${num(s.total)}</strong><span>Itens</span></div><div class="project-stat"><strong>${num(s.pending)}</strong><span>A empenhar</span></div><div class="project-stat"><strong>${urgency}</strong><span>Atrasos</span></div></div>
   </article>`;
 }
 
@@ -598,10 +687,21 @@ function openProjectModal(projectId = '') {
 // ---------- Materiais e fluxo operacional ----------
 function materialMatchesRoute(material, route) {
   const status = material.status || deriveMaterialStatus(material);
-  if (route === 'compras') return material.source === 'compra' && !['separado', 'enviado_parcial', 'enviado_obra'].includes(status);
-  if (route === 'recebimento') return material.source === 'compra' && num(material.qtyReceived) < num(material.qtyRequired) && Boolean(material.purchaseDate || material.orderNumber);
-  if (route === 'pintura') return Boolean(material.paintingRequired) && !['separado', 'enviado_parcial', 'enviado_obra'].includes(status);
-  if (route === 'separacao') return ['pronto_separar', 'separado_parcial', 'separado', 'enviado_parcial'].includes(status);
+  const allocation = materialAllocation(material);
+  const received = materialReceivedPurchaseQty(material);
+  const available = materialAvailableQty(material);
+  const separable = materialSeparableQty(material);
+  const separated = num(material.separatedQty);
+  const delivered = num(material.siteDeliveredQty);
+
+  if (route === 'compras') return allocation.purchaseQty > 0 && materialPurchaseNeedsAction(material);
+  if (route === 'recebimento') return allocation.purchaseQty > 0 && materialPurchaseCommitted(material) && received < allocation.purchaseQty;
+  if (route === 'pintura') {
+    return Boolean(material.paintingRequired)
+      && !['separado', 'enviado_parcial', 'enviado_obra'].includes(status)
+      && (available > num(material.paintingReturnedQty) || num(material.paintingSentQty) > num(material.paintingReturnedQty));
+  }
+  if (route === 'separacao') return separable > separated || separated > delivered;
   return true;
 }
 
@@ -610,7 +710,7 @@ function filteredMaterials(route) {
   return currentMaterials().filter(item => {
     const status = item.status || deriveMaterialStatus(item);
     const category = item.category || 'Sem categoria';
-    const haystack = normalizeText([item.code, item.description, item.type, item.color, item.supplier, item.orderNumber, item.notes].filter(Boolean).join(' '));
+    const haystack = normalizeText([item.code, item.description, item.type, item.color, item.category, item.supplier, item.orderNumber, item.notes, item.dimensions, item.medidas, item.measurements, item.width, item.largura, item.height, item.altura, item.length, item.comprimento, item.medida, item.area, item.areaM2, item.m2, ...Object.values(item.sourceDetails || {})].filter(value => value !== undefined && value !== null && String(value).trim() !== '').join(' '));
     return materialMatchesRoute(item, route)
       && (!search || haystack.includes(search))
       && (state.filters.status === 'todos' || status === state.filters.status)
@@ -687,19 +787,69 @@ function renderMaterialsTable(materials) {
 
 function materialRow(material) {
   const status = material.status || deriveMaterialStatus(material);
-  const [actionLabel, action] = nextAction({ ...material, status });
-  const currentQty = status === 'enviado_obra' || status === 'enviado_parcial' ? num(material.siteDeliveredQty)
-    : status === 'separado' || status === 'separado_parcial' ? num(material.separatedQty)
-    : ['pronto_separar', 'em_pintura', 'pintura_atrasada', 'aguarda_pintura'].includes(status) && material.paintingRequired ? Math.max(num(material.paintingReturnedQty), num(material.paintingSentQty))
-    : material.source === 'estoque' ? num(material.stockReservedQty) : num(material.qtyReceived);
-  const required = num(material.qtyRequired);
-  const pct = required ? clamp(Math.round((currentQty / required) * 100), 0, 100) : 0;
+  const allocation = materialAllocation(material);
+  const available = materialAvailableQty(material);
+  const separable = materialSeparableQty(material);
+  const received = materialReceivedPurchaseQty(material);
+  const separated = num(material.separatedQty);
+  const delivered = num(material.siteDeliveredQty);
+  const paintSent = num(material.paintingSentQty);
+  const paintReturned = num(material.paintingReturnedQty);
+  let [actionLabel, action] = nextAction({ ...material, status });
+
+  if (state.route === 'compras') [actionLabel, action] = ['Registrar compra', 'purchase'];
+  else if (state.route === 'recebimento') [actionLabel, action] = ['Confirmar chegada', 'receive'];
+  else if (state.route === 'pintura') {
+    if (paintSent > paintReturned) [actionLabel, action] = ['Registrar retorno', 'return-paint'];
+    else if (available > paintSent) [actionLabel, action] = ['Enviar para pintura', 'send-paint'];
+    else [actionLabel, action] = ['Ver material', 'view'];
+  } else if (state.route === 'separacao') {
+    if (separated < separable) [actionLabel, action] = [separated > 0 ? 'Continuar separação' : 'Marcar separado', 'separate'];
+    else if (separated > delivered) [actionLabel, action] = [delivered > 0 ? 'Continuar envio' : 'Enviar para obra', 'deliver'];
+    else [actionLabel, action] = ['Ver material', 'view'];
+  } else if (state.route === 'materiais' && materialPurchaseNeedsAction(material)) {
+    [actionLabel, action] = ['Registrar compra', 'purchase'];
+  }
+
+  let currentQty = 0;
+  let requiredQty = allocation.required;
+  let quantityNote = '';
+  if (state.route === 'compras') {
+    requiredQty = allocation.purchaseQty;
+    quantityNote = 'Parcela de compra';
+  } else if (state.route === 'recebimento') {
+    currentQty = received;
+    requiredQty = allocation.purchaseQty;
+    quantityNote = 'Parcela de compra';
+  } else if (state.route === 'pintura') {
+    currentQty = Math.max(paintSent, paintReturned);
+    quantityNote = `Disponível: ${fmtQty(available)} ${material.unit || 'un'}`;
+  } else if (state.route === 'separacao') {
+    currentQty = separated;
+    quantityNote = `Disponível agora: ${fmtQty(separable)} ${material.unit || 'un'}`;
+  } else {
+    currentQty = delivered || separated || paintReturned || paintSent || available;
+  }
+
+  const pct = requiredQty ? clamp(Math.round((currentQty / requiredQty) * 100), 0, 100) : 0;
   const eta = ['em_pintura', 'pintura_atrasada'].includes(status) ? material.paintingEta : material.deliveryEta;
+  const sourceLabel = allocation.source === 'misto' ? 'Compra + estoque'
+    : allocation.source === 'estoque' ? 'Estoque'
+    : allocation.source === 'compra' ? 'Compra'
+    : 'Definir depois';
+  const sourceTone = allocation.source === 'misto' ? 'warning'
+    : allocation.source === 'estoque' ? 'violet'
+    : allocation.source === 'compra' ? 'info'
+    : 'neutral';
+  const allocationNote = allocation.source === 'misto'
+    ? `${fmtQty(allocation.stockQty)} estoque + ${fmtQty(allocation.purchaseQty)} compra`
+    : '';
+
   return `<tr>
     <td><span class="cell-main">${escapeHtml(material.description || 'Sem descrição')}</span><span class="cell-sub">${escapeHtml([material.code, material.type, material.color].filter(Boolean).join(' · ') || 'Sem código')}</span></td>
     <td>${escapeHtml(material.category || 'Sem categoria')}</td>
-    <td><span class="status-pill status-${material.source === 'estoque' ? 'violet' : 'info'}">${material.source === 'estoque' ? 'Estoque' : 'Compra'}</span>${material.paintingRequired ? '<span class="cell-sub">com pintura</span>' : ''}</td>
-    <td class="qty-cell"><strong>${fmtQty(currentQty)} / ${fmtQty(required)} ${escapeHtml(material.unit || 'un')}</strong><div class="qty-track"><span style="width:${pct}%"></span></div></td>
+    <td><span class="status-pill status-${sourceTone}">${sourceLabel}</span>${allocationNote ? `<span class="cell-sub">${escapeHtml(allocationNote)}</span>` : ''}${material.paintingRequired ? '<span class="cell-sub">com pintura</span>' : ''}</td>
+    <td class="qty-cell"><strong>${fmtQty(currentQty)} / ${fmtQty(requiredQty)} ${escapeHtml(material.unit || 'un')}</strong><div class="qty-track"><span style="width:${pct}%"></span></div>${quantityNote ? `<span class="cell-sub">${escapeHtml(quantityNote)}</span>` : ''}</td>
     <td>${statusPill(status)}</td>
     <td class="nowrap">${fmtDate(eta)}${eta && isPast(eta) && !['enviado_obra', 'separado'].includes(status) ? '<span class="cell-sub" style="color:var(--danger)">prazo vencido</span>' : ''}</td>
     <td><button class="btn ${action === 'view' ? 'btn-ghost' : 'btn-secondary'} btn-sm" data-quick-action="${action}" data-material-id="${material.id}">${escapeHtml(actionLabel)}</button></td>
@@ -753,13 +903,15 @@ function openMaterialModal(materialId = '') {
       <label class="field"><span>Responsável</span><input name="responsible" value="${escapeHtml(material.responsible || '')}" /></label>
 
       <div class="section-title">Origem do material</div>
-      <label class="field"><span>Origem *</span><select id="materialSource" name="source"><option value="compra" ${material.source !== 'estoque' ? 'selected' : ''}>Precisa comprar</option><option value="estoque" ${material.source === 'estoque' ? 'selected' : ''}>Já existe no estoque</option></select></label>
+      <label class="field"><span>Origem *</span><select id="materialSource" name="source"><option value="pendente" ${!material.source || material.source === 'pendente' ? 'selected' : ''}>Definir depois</option><option value="compra" ${material.source === 'compra' ? 'selected' : ''}>Precisa comprar</option><option value="estoque" ${material.source === 'estoque' ? 'selected' : ''}>Já existe no estoque</option><option value="misto" ${material.source === 'misto' ? 'selected' : ''}>Compra + estoque</option></select></label>
+      <label class="field source-mixed"><span>Quantidade do estoque</span><input name="stockRequiredQty" type="number" step="0.001" min="0" value="${escapeHtml(materialAllocation(material).stockQty)}" /></label>
+      <label class="field source-mixed"><span>Quantidade a comprar</span><input name="purchaseRequiredQty" type="number" step="0.001" min="0" value="${escapeHtml(materialAllocation(material).purchaseQty)}" readonly /></label>
       <label class="field source-purchase"><span>Fornecedor</span><input name="supplier" value="${escapeHtml(material.supplier || '')}" /></label>
       <label class="field source-purchase"><span>Pedido / OC</span><input name="orderNumber" value="${escapeHtml(material.orderNumber || '')}" /></label>
       <label class="field source-purchase"><span>Data da compra</span><input name="purchaseDate" type="date" value="${escapeHtml(material.purchaseDate || '')}" /></label>
       <label class="field source-purchase"><span>Previsão de chegada</span><input name="deliveryEta" type="date" value="${escapeHtml(material.deliveryEta || '')}" /></label>
-      <label class="field source-purchase"><span>Quantidade recebida</span><input name="qtyReceived" type="number" step="0.001" min="0" value="${escapeHtml(material.qtyReceived ?? 0)}" /></label>
-      <label class="field source-stock"><span>Quantidade reservada</span><input name="stockReservedQty" type="number" step="0.001" min="0" value="${escapeHtml(material.stockReservedQty ?? 0)}" /></label>
+      <label class="field source-purchase"><span>Quantidade recebida da compra</span><input name="qtyReceived" type="number" step="0.001" min="0" value="${escapeHtml(material.qtyReceived ?? 0)}" /></label>
+      <input name="stockReservedQty" type="hidden" value="${escapeHtml(materialAllocation(material).stockQty)}" />
       <label class="field source-stock"><span>Código no estoque</span><input name="stockItemCode" value="${escapeHtml(material.stockItemCode || '')}" /></label>
       <label class="field source-stock"><span>Localização no estoque</span><input name="stockLocation" value="${escapeHtml(material.stockLocation || '')}" /></label>
 
@@ -786,19 +938,64 @@ function openMaterialModal(materialId = '') {
   $$('[data-close-modal="true"]', $('#modalRoot')).forEach(b => b.addEventListener('click', closeModal));
   const sourceSelect = $('#materialSource');
   const syncSourceFields = () => {
-    const isStock = sourceSelect.value === 'estoque';
-    $$('.source-stock', $('#materialForm')).forEach(el => el.hidden = !isStock);
-    $$('.source-purchase', $('#materialForm')).forEach(el => el.hidden = isStock);
+    const mode = sourceSelect.value;
+    const isMixed = mode === 'misto';
+    const usesStock = mode === 'estoque' || isMixed;
+    const usesPurchase = mode === 'compra' || isMixed;
+    $$('.source-stock', $('#materialForm')).forEach(el => el.hidden = !usesStock);
+    $$('.source-purchase', $('#materialForm')).forEach(el => el.hidden = !usesPurchase);
+    $$('.source-mixed', $('#materialForm')).forEach(el => el.hidden = !isMixed);
+
+    const requiredInput = $('[name="qtyRequired"]', $('#materialForm'));
+    const stockInput = $('[name="stockRequiredQty"]', $('#materialForm'));
+    const purchaseInput = $('[name="purchaseRequiredQty"]', $('#materialForm'));
+    const reservedInput = $('[name="stockReservedQty"]', $('#materialForm'));
+    const required = Math.max(0, num(requiredInput?.value));
+    const stock = mode === 'estoque' ? required : isMixed ? clamp(num(stockInput?.value), 0, required) : 0;
+    const purchase = mode === 'compra' ? required : isMixed ? Math.max(0, required - stock) : 0;
+    if (stockInput && !isMixed) stockInput.value = stock;
+    if (purchaseInput) purchaseInput.value = purchase;
+    if (reservedInput) reservedInput.value = stock;
   };
-  sourceSelect.addEventListener('change', syncSourceFields); syncSourceFields();
+  sourceSelect.addEventListener('change', syncSourceFields);
+  $('[name="qtyRequired"]', $('#materialForm'))?.addEventListener('input', syncSourceFields);
+  $('[name="stockRequiredQty"]', $('#materialForm'))?.addEventListener('input', syncSourceFields);
+  syncSourceFields();
   $('#paintingRequired').addEventListener('change', (e) => { $('#paintingFields').hidden = !e.target.checked; });
   $('#saveMaterialBtn').addEventListener('click', async () => {
     const form = $('#materialForm'); if (!form.reportValidity()) return;
     const button = $('#saveMaterialBtn'); setBusy(button, true);
     const entries = Object.fromEntries(new FormData(form).entries());
-    const numericFields = ['qtyRequired', 'qtyReceived', 'stockReservedQty', 'paintingSentQty', 'paintingReturnedQty', 'separatedQty', 'siteDeliveredQty'];
+    const numericFields = ['qtyRequired', 'qtyReceived', 'stockReservedQty', 'stockRequiredQty', 'purchaseRequiredQty', 'paintingSentQty', 'paintingReturnedQty', 'separatedQty', 'siteDeliveredQty'];
     numericFields.forEach(key => entries[key] = num(entries[key]));
     entries.paintingRequired = $('#paintingRequired').checked;
+    const requiredQty = Math.max(0, entries.qtyRequired);
+    if (entries.source === 'misto') {
+      entries.stockRequiredQty = clamp(entries.stockRequiredQty, 0, requiredQty);
+      entries.purchaseRequiredQty = Math.max(0, requiredQty - entries.stockRequiredQty);
+      if (!(entries.stockRequiredQty > 0 && entries.purchaseRequiredQty > 0)) {
+        setBusy(button, false);
+        toast('Na origem Compra + estoque, informe uma quantidade de estoque maior que zero e menor que a quantidade necessária.', 'error');
+        return;
+      }
+      entries.stockReservedQty = entries.stockRequiredQty;
+      entries.qtyReceived = clamp(entries.qtyReceived, 0, entries.purchaseRequiredQty);
+    } else if (entries.source === 'estoque') {
+      entries.stockRequiredQty = requiredQty;
+      entries.purchaseRequiredQty = 0;
+      entries.stockReservedQty = requiredQty;
+      entries.qtyReceived = 0;
+    } else if (entries.source === 'compra') {
+      entries.stockRequiredQty = 0;
+      entries.purchaseRequiredQty = requiredQty;
+      entries.stockReservedQty = 0;
+      entries.qtyReceived = clamp(entries.qtyReceived, 0, requiredQty);
+    } else {
+      entries.stockRequiredQty = 0;
+      entries.purchaseRequiredQty = 0;
+      entries.stockReservedQty = 0;
+      entries.qtyReceived = 0;
+    }
     const id = materialId || push(ref(db, `materials/${state.currentProjectId}`)).key;
     const payload = {
       ...material, ...entries, id, projectId: state.currentProjectId,
@@ -817,7 +1014,11 @@ function openMaterialModal(materialId = '') {
 }
 
 function openQuickActionModal(material, action) {
-  const required = num(material.qtyRequired);
+  const allocation = materialAllocation(material);
+  const totalRequired = allocation.required;
+  const availableNow = materialAvailableQty(material);
+  const separableNow = materialSeparableQty(material);
+  const required = ['purchase', 'receive'].includes(action) ? allocation.purchaseQty : action === 'reserve' ? allocation.stockQty : totalRequired;
   const configs = {
     purchase: {
       title: 'Registrar compra', subtitle: material.description,
@@ -847,7 +1048,7 @@ function openQuickActionModal(material, action) {
     'send-paint': {
       title: 'Enviar para pintura', subtitle: material.description,
       fields: `
-        <label class="field"><span>Quantidade enviada</span><input name="paintingSentQty" type="number" step="0.001" min="0" value="${escapeHtml(material.paintingSentQty || required)}" required /></label>
+        <label class="field"><span>Quantidade enviada</span><input name="paintingSentQty" type="number" step="0.001" min="0" value="${escapeHtml(material.paintingSentQty || availableNow)}" required /></label>
         <label class="field"><span>Data de envio</span><input name="paintingSentDate" type="date" value="${escapeHtml(material.paintingSentDate || todayISO())}" required /></label>
         <label class="field"><span>Empresa de pintura</span><input name="paintingSupplier" value="${escapeHtml(material.paintingSupplier || '')}" /></label>
         <label class="field"><span>Previsão de retorno</span><input name="paintingEta" type="date" value="${escapeHtml(material.paintingEta || '')}" required /></label>`,
@@ -856,7 +1057,7 @@ function openQuickActionModal(material, action) {
     'return-paint': {
       title: 'Registrar retorno da pintura', subtitle: material.description,
       fields: `
-        <label class="field"><span>Quantidade total retornada</span><input name="paintingReturnedQty" type="number" step="0.001" min="0" value="${escapeHtml(material.paintingReturnedQty || material.paintingSentQty || required)}" required /></label>
+        <label class="field"><span>Quantidade total retornada</span><input name="paintingReturnedQty" type="number" step="0.001" min="0" value="${escapeHtml(material.paintingReturnedQty || material.paintingSentQty || availableNow)}" required /></label>
         <label class="field"><span>Data de retorno</span><input name="paintingReturnDate" type="date" value="${escapeHtml(material.paintingReturnDate || todayISO())}" required /></label>
         <label class="field full"><span>Observações</span><textarea name="paintingNotes">${escapeHtml(material.paintingNotes || '')}</textarea></label>`,
       message: 'Retorno da pintura atualizado'
@@ -864,7 +1065,7 @@ function openQuickActionModal(material, action) {
     separate: {
       title: 'Registrar separação', subtitle: `${material.description} · necessário ${fmtQty(required)} ${material.unit || 'un'}`,
       fields: `
-        <label class="field"><span>Quantidade total separada</span><input name="separatedQty" type="number" step="0.001" min="0" value="${escapeHtml(material.separatedQty || required)}" required /></label>
+        <label class="field"><span>Quantidade total separada</span><input name="separatedQty" type="number" step="0.001" min="0" value="${escapeHtml(material.separatedQty || separableNow)}" required /></label>
         <label class="field"><span>Data da separação</span><input name="separatedDate" type="date" value="${escapeHtml(material.separatedDate || todayISO())}" required /></label>
         <label class="field full"><span>Local / identificação do lote</span><input name="separationLocation" value="${escapeHtml(material.separationLocation || '')}" /></label>`,
       message: 'Separação atualizada'
@@ -872,7 +1073,7 @@ function openQuickActionModal(material, action) {
     deliver: {
       title: 'Enviar material para a obra', subtitle: material.description,
       fields: `
-        <label class="field"><span>Quantidade total enviada</span><input name="siteDeliveredQty" type="number" step="0.001" min="0" value="${escapeHtml(material.siteDeliveredQty || required)}" required /></label>
+        <label class="field"><span>Quantidade total enviada</span><input name="siteDeliveredQty" type="number" step="0.001" min="0" value="${escapeHtml(material.siteDeliveredQty || num(material.separatedQty))}" required /></label>
         <label class="field"><span>Data do envio</span><input name="siteDeliveredDate" type="date" value="${escapeHtml(material.siteDeliveredDate || todayISO())}" required /></label>
         <label class="field full"><span>Recebido por / observações</span><input name="siteDeliveryNotes" value="${escapeHtml(material.siteDeliveryNotes || '')}" /></label>`,
       message: 'Envio para a obra atualizado'
@@ -891,6 +1092,29 @@ function openQuickActionModal(material, action) {
     const button = $('#saveQuickActionBtn'); setBusy(button, true);
     const data = Object.fromEntries(new FormData(form).entries());
     ['stockReservedQty', 'qtyReceived', 'paintingSentQty', 'paintingReturnedQty', 'separatedQty', 'siteDeliveredQty'].forEach(key => { if (key in data) data[key] = num(data[key]); });
+    const limits = {
+      stockReservedQty: allocation.stockQty,
+      qtyReceived: allocation.purchaseQty,
+      paintingSentQty: availableNow,
+      paintingReturnedQty: num(material.paintingSentQty),
+      separatedQty: separableNow,
+      siteDeliveredQty: num(material.separatedQty)
+    };
+    const labels = {
+      stockReservedQty: 'quantidade de estoque',
+      qtyReceived: 'quantidade da parcela comprada',
+      paintingSentQty: 'quantidade disponível',
+      paintingReturnedQty: 'quantidade enviada para pintura',
+      separatedQty: 'quantidade disponível para separação',
+      siteDeliveredQty: 'quantidade separada'
+    };
+    for (const [field, limit] of Object.entries(limits)) {
+      if (field in data && data[field] > limit + 0.000001) {
+        setBusy(button, false);
+        toast(`A quantidade informada não pode ser maior que a ${labels[field]} (${fmtQty(limit)} ${material.unit || 'un'}).`, 'error');
+        return;
+      }
+    }
     const payload = { ...material, ...data, updatedAt: now(), updatedBy: state.user.uid };
     payload.status = deriveMaterialStatus(payload);
     try {
