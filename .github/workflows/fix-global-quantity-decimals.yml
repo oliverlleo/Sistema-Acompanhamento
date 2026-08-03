@@ -1,0 +1,290 @@
+name: Fix global quantity decimals
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-global-quantity-decimals.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply unit-aware quantity parsing everywhere
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path('public')
+          version = '20260803-1632'
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path, text):
+              Path(path).write_text(text, encoding='utf-8')
+
+          # 1) Central numeric rule.
+          path = root / 'material-flow.js'
+          text = read(path)
+          old = """export function number(value) {
+            if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+            if (value === null || value === undefined || value === '') return 0;
+            let text = String(value).trim().replace(/\\s/g, '');
+            if (/^-?\\d{1,3}(\\.\\d{3})+(,\\d+)?$/.test(text)) text = text.replace(/\\./g, '').replace(',', '.');
+            else if (/^-?\\d+(,\\d+)$/.test(text)) text = text.replace(',', '.');
+            const parsed = Number(text);
+            return Number.isFinite(parsed) ? parsed : 0;
+          }
+          """
+          new = """export function number(value) {
+            if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+            if (value === null || value === undefined || value === '') return 0;
+            let text = String(value).trim().replace(/\\s/g, '');
+            if (text.includes(',') && text.includes('.')) {
+              if (text.lastIndexOf(',') > text.lastIndexOf('.')) text = text.replace(/\\./g, '').replace(',', '.');
+              else text = text.replace(/,/g, '');
+            } else if (text.includes(',')) {
+              text = text.replace(',', '.');
+            }
+            const parsed = Number(text);
+            return Number.isFinite(parsed) ? parsed : 0;
+          }
+
+          export function normalizedQuantityUnit(material = {}) {
+            return String(material.unit || '')
+              .normalize('NFD')
+              .replace(/[\\u0300-\\u036f]/g, '')
+              .trim()
+              .toLowerCase();
+          }
+
+          export function isDecimalQuantity(material = {}) {
+            return ['m', 'm2', 'm²', 'metro', 'metros', 'kg'].includes(normalizedQuantityUnit(material));
+          }
+
+          export function quantityNumber(material = {}, value) {
+            if (value === null || value === undefined || value === '') return 0;
+
+            if (typeof value === 'number') {
+              if (!Number.isFinite(value)) return 0;
+              // Importações antigas salvaram 435.554 m como 435554 no Firebase.
+              if (isDecimalQuantity(material) && Number.isInteger(value) && Math.abs(value) >= 1000) {
+                return value / 1000;
+              }
+              return value;
+            }
+
+            let text = String(value).trim().replace(/\\s/g, '');
+            if (!text) return 0;
+
+            if (text.includes(',') && text.includes('.')) {
+              if (text.lastIndexOf(',') > text.lastIndexOf('.')) text = text.replace(/\\./g, '').replace(',', '.');
+              else text = text.replace(/,/g, '');
+            } else if (text.includes(',')) {
+              text = text.replace(',', '.');
+            } else if (text.includes('.') && !isDecimalQuantity(material)) {
+              if (/^-?\\d{1,3}(\\.\\d{3})+$/.test(text)) text = text.replace(/\\./g, '');
+            }
+
+            const parsed = Number(text);
+            return Number.isFinite(parsed) ? parsed : 0;
+          }
+          """
+          if old not in text:
+              raise SystemExit('material-flow: number() block not found')
+          text = text.replace(old, new, 1)
+          quantity_field = r'(?:qty[A-Z][A-Za-z0-9_]*|[A-Za-z][A-Za-z0-9_]*Qty)'
+          text = re.sub(rf'number\((material)\.({quantity_field})\)', r'quantityNumber(\1, \1.\2)', text)
+          write(path, text)
+
+          # 2) Core app has its own calculations; give it the same rule.
+          path = root / 'app.js'
+          text = read(path)
+          marker = "const clamp = (n, min, max) => Math.min(max, Math.max(min, n));"
+          helper = """const normalizedQuantityUnit = (material = {}) => String(material.unit || '')
+            .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').trim().toLowerCase();
+          const isDecimalQuantity = (material = {}) => ['m', 'm2', 'm²', 'metro', 'metros', 'kg'].includes(normalizedQuantityUnit(material));
+          const quantityNum = (material = {}, value) => {
+            if (value === null || value === undefined || value === '') return 0;
+            if (typeof value === 'number') {
+              if (!Number.isFinite(value)) return 0;
+              if (isDecimalQuantity(material) && Number.isInteger(value) && Math.abs(value) >= 1000) return value / 1000;
+              return value;
+            }
+            let text = String(value).trim().replace(/\\s/g, '');
+            if (!text) return 0;
+            if (text.includes(',') && text.includes('.')) {
+              if (text.lastIndexOf(',') > text.lastIndexOf('.')) text = text.replace(/\\./g, '').replace(',', '.');
+              else text = text.replace(/,/g, '');
+            } else if (text.includes(',')) text = text.replace(',', '.');
+            else if (text.includes('.') && !isDecimalQuantity(material) && /^-?\\d{1,3}(\\.\\d{3})+$/.test(text)) text = text.replace(/\\./g, '');
+            const parsed = Number(text);
+            return Number.isFinite(parsed) ? parsed : 0;
+          };
+          """
+          if 'const quantityNum =' not in text:
+              if marker not in text:
+                  raise SystemExit('app.js: clamp marker not found')
+              text = text.replace(marker, helper + marker, 1)
+          text = re.sub(rf'num\(([A-Za-z_$][\w$]*)\.({quantity_field})\)', r'quantityNum(\1, \1.\2)', text)
+          text = re.sub(rf'fmtQty\(([A-Za-z_$][\w$]*)\.({quantity_field})\)', r'fmtQty(quantityNum(\1, \1.\2))', text)
+          write(path, text)
+
+          # 3) Every feature module that imports material-flow receives quantityNumber.
+          for path in root.glob('*.js'):
+              if path.name in {'material-flow.js', 'app.js', 'tracking-available-summary.js', 'xlsx-import-fix.js'}:
+                  continue
+              text = read(path)
+              if "from './material-flow.js" not in text:
+                  continue
+
+              def add_import(match):
+                  names = match.group(1)
+                  if 'quantityNumber' not in names:
+                      names = names.rstrip() + ', quantityNumber'
+                  return "import {" + names + "} from './material-flow.js?v=" + version + "';"
+
+              text = re.sub(
+                  r"import\s*\{([^}]*)\}\s*from\s*'\./material-flow\.js\?v=[^']+';",
+                  add_import,
+                  text,
+                  count=1,
+                  flags=re.S
+              )
+              text = re.sub(rf'number\(([A-Za-z_$][\w$]*)\.({quantity_field})\)', r'quantityNumber(\1, \1.\2)', text)
+              text = re.sub(rf'formatQty\(([A-Za-z_$][\w$]*)\.({quantity_field})\)', r'formatQty(quantityNumber(\1, \1.\2))', text)
+              write(path, text)
+
+          # 4) Separated projects has a local number() but must use the material-aware function.
+          path = root / 'separated-projects.js'
+          text = read(path)
+          if 'quantityNumber' not in text.split('\n', 8)[3]:
+              # Import may be on a later line; generic import patch above normally handles it.
+              pass
+          text = re.sub(rf'number\(([A-Za-z_$][\w$]*)\.({quantity_field})\)', r'quantityNumber(\1, \1.\2)', text)
+          text = re.sub(rf'formatQty\(([A-Za-z_$][\w$]*)\.({quantity_field})\)', r'formatQty(quantityNumber(\1, \1.\2))', text)
+          write(path, text)
+
+          # 5) Future XLSX imports: parse quantity only after knowing the unit.
+          path = root / 'xlsx-import-fix.js'
+          text = read(path)
+          if 'function quantityNum(value, unit)' not in text:
+              insert_after = """function num(value) {
+            if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+            if (value === null || value === undefined || value === '') return 0;
+            let text = String(value).trim().replace(/\\s/g, '');
+            if (/^-?\\d{1,3}(\\.\\d{3})+(,\\d+)?$/.test(text)) text = text.replace(/\\./g, '').replace(',', '.');
+            else if (/^-?\\d+(,\\d+)$/.test(text)) text = text.replace(',', '.');
+            const parsed = Number(text);
+            return Number.isFinite(parsed) ? parsed : 0;
+          }
+          """
+              helper = insert_after + """
+          function quantityNum(value, unit = '') {
+            if (value === null || value === undefined || value === '') return 0;
+            const normalizedUnit = String(unit || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').trim().toLowerCase();
+            const decimalUnit = ['m', 'm2', 'm²', 'metro', 'metros', 'kg'].includes(normalizedUnit);
+            if (typeof value === 'number') {
+              if (!Number.isFinite(value)) return 0;
+              if (decimalUnit && Number.isInteger(value) && Math.abs(value) >= 1000) return value / 1000;
+              return value;
+            }
+            let text = String(value).trim().replace(/\\s/g, '');
+            if (!text) return 0;
+            if (text.includes(',') && text.includes('.')) {
+              if (text.lastIndexOf(',') > text.lastIndexOf('.')) text = text.replace(/\\./g, '').replace(',', '.');
+              else text = text.replace(/,/g, '');
+            } else if (text.includes(',')) text = text.replace(',', '.');
+            else if (text.includes('.') && !decimalUnit && /^-?\\d{1,3}(\\.\\d{3})+$/.test(text)) text = text.replace(/\\./g, '');
+            const parsed = Number(text);
+            return Number.isFinite(parsed) ? parsed : 0;
+          }
+          """
+              if insert_after not in text:
+                  raise SystemExit('xlsx-import-fix: num block not found')
+              text = text.replace(insert_after, helper, 1)
+
+          old_block = """    const rawQuantity = getField('quantity');
+              let quantity = num(rawQuantity);
+              let quantityFromUnitValue = false;
+              const unitValue = num(getField('unitValue'));
+          """
+          new_block = """    const rawQuantity = getField('quantity');
+              const importedUnit = String(getField('unit') || '').trim();
+              let quantity = quantityNum(rawQuantity, importedUnit || 'un');
+              let quantityFromUnitValue = false;
+              const unitValue = quantityNum(getField('unitValue'), 'm');
+          """
+          if old_block not in text:
+              raise SystemExit('xlsx-import-fix: quantity block not found')
+          text = text.replace(old_block, new_block, 1)
+          text = text.replace("    let unit = String(getField('unit') || '').trim();", "    let unit = importedUnit;", 1)
+          write(path, text)
+
+          # 6) Bust every relevant cache and dependency URL.
+          for path in root.glob('*.js'):
+              text = read(path)
+              text = re.sub(r"material-flow\.js\?v=[0-9-]+", f"material-flow.js?v={version}", text)
+              write(path, text)
+
+          path = root / 'route-features.js'
+          text = read(path)
+          replacements = {
+              r"separated-projects\.js\?v=[0-9-]+": f"separated-projects.js?v={version}",
+              r"tracking-item-counts\.js\?v=[0-9-]+": f"tracking-item-counts.js?v={version}",
+              r"tracking-available-summary\.js\?v=[0-9-]+": f"tracking-available-summary.js?v={version}",
+              r"acompanhamento-detail\.js\?v=[0-9-]+": f"acompanhamento-detail.js?v={version}",
+              r"xlsx-import-fix\.js\?v=[0-9-]+": f"xlsx-import-fix.js?v={version}",
+          }
+          for pattern, replacement in replacements.items():
+              text = re.sub(pattern, replacement, text)
+          write(path, text)
+
+          path = root / 'index.html'
+          text = read(path)
+          text = re.sub(r"app\.js\?v=[0-9-]+", f"app.js?v={version}", text)
+          text = re.sub(r"route-features\.js\?v=[0-9-]+", f"route-features.js?v={version}", text)
+          write(path, text)
+
+          # 7) Safety checks: no material quantity calculation may remain on generic num/number.
+          bad = []
+          pattern = re.compile(rf'\b(?:num|number)\([A-Za-z_$][\w$]*\.({quantity_field})\)')
+          for path in root.glob('*.js'):
+              if path.name == 'tracking-available-summary.js':
+                  continue
+              for line_no, line in enumerate(read(path).splitlines(), 1):
+                  if pattern.search(line):
+                      bad.append(f'{path}:{line_no}: {line.strip()}')
+          if bad:
+              raise SystemExit('Generic quantity parsing still found:\n' + '\n'.join(bad))
+
+          print('Global quantity parsing updated successfully.')
+          PY
+
+      - name: Syntax check
+        run: |
+          for file in public/material-flow.js public/app.js public/separated-projects.js public/acompanhamento-detail.js public/tracking-item-counts.js public/tracking-available-summary.js public/xlsx-import-fix.js public/route-features.js; do
+            node --check "$file"
+          done
+
+      - name: Commit fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "Corrigir decimais de quantidade em todo o sistema"
+          git push
