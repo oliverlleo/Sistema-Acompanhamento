@@ -1,4 +1,4 @@
-name: Update purchase and painting summaries
+name: Update tracking summaries
 
 on:
   push:
@@ -28,9 +28,9 @@ jobs:
               text = text.replace(old, new, 1)
 
           replace_once(
-              ".trk-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}",
-              ".trk-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}\n    .trk-summary-purchase{grid-template-columns:repeat(3,minmax(0,1fr))}",
-              'purchase summary grid'
+              "    totalRequired: 0,\n    purchaseRequired: 0,",
+              "    totalItems: items.length,\n    totalRequired: 0,\n    purchaseRequired: 0,",
+              'total item counter'
           )
 
           replace_once(
@@ -43,6 +43,54 @@ jobs:
               "    if (material.paintingRequired) {\n      data.paintingRequiredQty += required;",
               "    if (material.paintingRequired) {\n      data.paintingRequiredItems += 1;\n      data.paintingRequiredQty += required;",
               'painting total items'
+          )
+
+          replace_once(
+              """    comprado: {
+      title: 'Comprado', tone: 'blue', value: data.purchasedQty, total: data.purchaseRequired,
+      ...percent(data.purchasedQty, data.purchaseRequired)
+    },
+    pintura: {
+      title: 'Em pintura', tone: 'violet', value: data.inPaintingQty, total: data.paintingRequiredQty,
+      ...percent(data.inPaintingQty, data.paintingRequiredQty)
+    },
+    disponivel: {
+      title: 'Conferido', tone: 'amber', value: data.readyQty, total: data.totalRequired,
+      ...percent(data.readyQty, data.totalRequired)
+    },
+    separado: {
+      title: 'Separado', tone: 'green', value: data.separatedQty, total: data.totalRequired,
+      ...percent(data.separatedQty, data.totalRequired)
+    }""",
+              """    comprado: {
+      title: 'Comprado', tone: 'blue', value: data.purchasedQty, total: data.purchaseRequired, unit: 'un',
+      ...percent(data.purchasedQty, data.purchaseRequired)
+    },
+    pintura: {
+      title: 'Em pintura', tone: 'violet', value: data.inPaintingQty, total: data.paintingRequiredQty, unit: 'un',
+      ...percent(data.inPaintingQty, data.paintingRequiredQty)
+    },
+    disponivel: {
+      title: 'Conferido', tone: 'amber', value: data.readyItems, total: data.totalItems, unit: 'itens',
+      ...percent(data.readyItems, data.totalItems)
+    },
+    separado: {
+      title: 'Separado', tone: 'green', value: data.separatedItems, total: data.totalItems, unit: 'itens',
+      ...percent(data.separatedItems, data.totalItems)
+    }""",
+              'stage item percentages'
+          )
+
+          replace_once(
+              "<span>${formatQty(meta.value)} de ${formatQty(meta.total)}</span>",
+              "<span>${formatQty(meta.value)} de ${formatQty(meta.total)} ${escapeHtml(meta.unit || '')}</span>",
+              'stage button unit'
+          )
+
+          replace_once(
+              ".trk-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}",
+              ".trk-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}\n    .trk-summary-purchase{grid-template-columns:repeat(3,minmax(0,1fr))}",
+              'purchase summary grid'
           )
 
           replace_once(
@@ -86,6 +134,12 @@ jobs:
           )
 
           replace_once(
+              "return `<section class=\"trk-progress-card\"><div class=\"trk-progress-head\"><span>${escapeHtml(meta.title)}</span><strong>${meta.label === '0%' ? '0%' : meta.label} · ${formatQty(meta.value)} de ${formatQty(meta.total)}</strong></div><div class=\"trk-progress\"><i style=\"width:${meta.visual}%\"></i></div></section>`;",
+              "return `<section class=\"trk-progress-card\"><div class=\"trk-progress-head\"><span>${escapeHtml(meta.title)}</span><strong>${meta.label === '0%' ? '0%' : meta.label} · ${formatQty(meta.value)} de ${formatQty(meta.total)} ${escapeHtml(meta.unit || '')}</strong></div><div class=\"trk-progress\"><i style=\"width:${meta.visual}%\"></i></div></section>`;",
+              'progress unit'
+          )
+
+          replace_once(
               '<section class="trk-summary">${summaryHtml(activeStage, data)}</section>',
               '<section class="trk-summary ${activeStage === \'comprado\' ? \'trk-summary-purchase\' : \'\'}">${summaryHtml(activeStage, data)}</section>',
               'summary render'
@@ -96,7 +150,7 @@ jobs:
           route = Path('public/route-features.js')
           route_text = route.read_text(encoding='utf-8')
           old_route = "import './acompanhamento-detail.js?v=20260803-1512';"
-          new_route = "import './acompanhamento-detail.js?v=20260803-1524';"
+          new_route = "import './acompanhamento-detail.js?v=20260803-1530';"
           if old_route not in route_text:
               raise SystemExit('Pattern not found: acompanhamento cache')
           route.write_text(route_text.replace(old_route, new_route, 1), encoding='utf-8')
@@ -104,7 +158,7 @@ jobs:
           index = Path('public/index.html')
           index_text = index.read_text(encoding='utf-8')
           old_index = './route-features.js?v=20260803-1512'
-          new_index = './route-features.js?v=20260803-1524'
+          new_index = './route-features.js?v=20260803-1530'
           if old_index not in index_text:
               raise SystemExit('Pattern not found: route cache')
           index.write_text(index_text.replace(old_index, new_index, 1), encoding='utf-8')
@@ -118,5 +172,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public/acompanhamento-detail.js public/route-features.js public/index.html
-          git commit -m "Clarify purchase and painting tracking summaries" || exit 0
+          git commit -m "Clarify tracking totals and item percentages" || exit 0
           git push
