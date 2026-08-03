@@ -1,0 +1,106 @@
+name: Fix search input in core
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/fix-search-input-core.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch search behavior
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f'Pattern not found: {label}')
+              return text.replace(old, new, 1)
+
+          app_path = Path('public/app.js')
+          app = app_path.read_text(encoding='utf-8')
+
+          marker = "function roleLabel(role) {"
+          state_vars = """let materialSearchTimer = null;
+let materialSearchRevision = 0;
+let materialSearchCaret = null;
+
+function restoreMaterialSearchCaret(route) {
+  const snapshot = materialSearchCaret;
+  if (!snapshot || snapshot.route !== route || snapshot.value !== state.filters.search) return;
+  queueMicrotask(() => {
+    const input = document.querySelector('#materialSearch');
+    if (!(input instanceof HTMLInputElement) || input.value !== snapshot.value) return;
+    const limit = input.value.length;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(
+      Math.min(snapshot.start, limit),
+      Math.min(snapshot.end, limit),
+      snapshot.direction
+    );
+  });
+}
+
+"""
+          if 'let materialSearchTimer = null;' not in app:
+              app = replace_once(app, marker, state_vars + marker, 'search state variables')
+
+          old_listener = "  $('#materialSearch')?.addEventListener('input', (e) => { state.filters.search = e.target.value; renderMaterialQueue(route); $('#materialSearch')?.focus(); });"
+          new_listener = """  const materialSearchInput = $('#materialSearch');
+  materialSearchInput?.addEventListener('input', (event) => {
+    const input = event.currentTarget;
+    const value = input.value;
+    const revision = ++materialSearchRevision;
+    state.filters.search = value;
+    materialSearchCaret = {
+      route,
+      value,
+      start: input.selectionStart ?? value.length,
+      end: input.selectionEnd ?? input.selectionStart ?? value.length,
+      direction: input.selectionDirection || 'none'
+    };
+
+    clearTimeout(materialSearchTimer);
+    materialSearchTimer = setTimeout(() => {
+      if (revision !== materialSearchRevision || state.route !== route) return;
+      renderMaterialQueue(route);
+    }, 220);
+  });
+  restoreMaterialSearchCaret(route);"""
+          app = replace_once(app, old_listener, new_listener, 'material search listener')
+          app_path.write_text(app, encoding='utf-8')
+
+          route_path = Path('public/route-features.js')
+          route = route_path.read_text(encoding='utf-8')
+          route = route.replace("import './search-caret-fix.js?v=20260803-0841';\n", '')
+          route_path.write_text(route, encoding='utf-8')
+
+          index_path = Path('public/index.html')
+          index = index_path.read_text(encoding='utf-8')
+          index = index.replace('  <script type="module" src="./search-caret-fix.js?v=20260803-0927"></script>\n', '')
+          index = index.replace('./app.js?v=20260803-0959', './app.js?v=20260803-1022')
+          index = index.replace('./route-features.js?v=20260803-0959', './route-features.js?v=20260803-1022')
+          index_path.write_text(index, encoding='utf-8')
+          PY
+      - name: Verify syntax
+        run: |
+          node --check public/app.js
+          node --check public/route-features.js
+      - name: Commit fix
+        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/app.js public/route-features.js public/index.html
+          git commit -m 'Fix search input without deleting latest character'
+          git push
