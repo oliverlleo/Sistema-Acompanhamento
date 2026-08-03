@@ -1,7 +1,7 @@
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
 import {
-  allocation, purchaseCommitted, receivedPurchaseQty, separableQty,
+  allocation, purchaseCommitted, receivedPurchaseQty, availableQty,
   number, clamp, isPast
 } from './material-flow.js?v=20260803-0959';
 
@@ -144,8 +144,8 @@ function stageData(items) {
     const paintSent = clamp(number(material.paintingSentQty), 0, required || Number.MAX_SAFE_INTEGER);
     const paintReturned = clamp(number(material.paintingReturnedQty), 0, paintSent || Number.MAX_SAFE_INTEGER);
     const inPaint = Math.max(0, paintSent - paintReturned);
-    const separable = separableQty(material);
-    const readyPending = Math.max(0, separable - separated);
+    const checkedAvailable = availableQty(material);
+    const readyPending = Math.max(0, checkedAvailable - inPaint - separated);
 
     data.totalRequired += required;
     data.separatedQty += Math.min(separated, required || separated);
@@ -351,7 +351,10 @@ function availableRows(items) {
       const alloc = allocation(material);
       const received = receivedPurchaseQty(material);
       const separated = number(material.separatedQty);
-      const ready = Math.max(0, separableQty(material) - separated);
+      const paintSent = number(material.paintingSentQty);
+      const paintReturned = number(material.paintingReturnedQty);
+      const currentAwayAtPainting = Math.max(0, paintSent - paintReturned);
+      const ready = Math.max(0, availableQty(material) - currentAwayAtPainting - separated);
       return { material, alloc, received, ready };
     })
     .filter(row => row.ready > 0)
@@ -456,7 +459,7 @@ function categoryHtml(data) {
 }
 
 function progressHtml(meta) {
-  return `<section class="trk-progress-card"><div class="trk-progress-head"><span>${escapeHtml(meta.label)}</span><strong>${meta.label === '0%' ? '0%' : meta.label} · ${formatQty(meta.value)} de ${formatQty(meta.total)}</strong></div><div class="trk-progress"><i style="width:${meta.visual}%"></i></div></section>`;
+  return `<section class="trk-progress-card"><div class="trk-progress-head"><span>${escapeHtml(meta.title)}</span><strong>${meta.label === '0%' ? '0%' : meta.label} · ${formatQty(meta.value)} de ${formatQty(meta.total)}</strong></div><div class="trk-progress"><i style="width:${meta.visual}%"></i></div></section>`;
 }
 
 function bindSearch(root) {

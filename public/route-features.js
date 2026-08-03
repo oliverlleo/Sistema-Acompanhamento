@@ -1,7 +1,7 @@
 import './commitment-summary.js?v=20260803-0959';
 import './search-caret-fix.js?v=20260803-1025';
 import './direct-paint-delivery.js?v=20260803-1122';
-import './acompanhamento-detail.js?v=20260803-1505';
+import './acompanhamento-detail.js?v=20260803-1512';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
