@@ -47,6 +47,16 @@ function percent(value, total) {
   };
 }
 
+function setText(element, value) {
+  if (element && element.textContent !== value) element.textContent = value;
+}
+
+function setStyle(element, property, value) {
+  if (element && element.style.getPropertyValue(property) !== value) {
+    element.style.setProperty(property, value);
+  }
+}
+
 function stageData() {
   const totalItems = materials.length;
   let purchaseItems = 0;
@@ -123,11 +133,11 @@ function stageData() {
 function metric(label, value, note = '') {
   const article = document.createElement('article');
   article.className = 'trk-metric';
-  const labelEl = document.createElement('span');
-  labelEl.textContent = label;
+  const labelElement = document.createElement('span');
+  labelElement.textContent = label;
   const strong = document.createElement('strong');
   strong.textContent = value;
-  article.append(labelEl, strong);
+  article.append(labelElement, strong);
   if (note) {
     const small = document.createElement('small');
     small.textContent = note;
@@ -141,6 +151,13 @@ function patchSummary(activeStage, data) {
   if (!summary) return;
 
   if (activeStage === 'comprado') {
+    const signature = [
+      activeStage, data.purchasedItems, data.purchaseItems, data.purchasedQty,
+      data.purchaseRequiredQty, data.missingPurchaseItems, data.missingPurchaseQty,
+      data.nearestDeliveryEta
+    ].join('|');
+    if (summary.dataset.itemSummarySignature === signature) return;
+    summary.dataset.itemSummarySignature = signature;
     summary.style.gridTemplateColumns = 'repeat(3,minmax(0,1fr))';
     summary.replaceChildren(
       metric('Itens comprados', `${data.purchasedItems} de ${data.purchaseItems}`),
@@ -156,6 +173,13 @@ function patchSummary(activeStage, data) {
 
   summary.style.gridTemplateColumns = '';
   if (activeStage === 'pintura') {
+    const signature = [
+      activeStage, data.inPaintingItems, data.paintingRequiredItems,
+      data.inPaintingQty, data.paintingRequiredQty,
+      data.paintingReturnedQty, data.nearestPaintingEta
+    ].join('|');
+    if (summary.dataset.itemSummarySignature === signature) return;
+    summary.dataset.itemSummarySignature = signature;
     summary.replaceChildren(
       metric('Itens em pintura agora', `${data.inPaintingItems} de ${data.paintingRequiredItems}`),
       metric('Quantidade em pintura', `${formatQty(data.inPaintingQty)} un de ${formatQty(data.paintingRequiredQty)} un`),
@@ -167,7 +191,7 @@ function patchSummary(activeStage, data) {
 
 function patch() {
   patchQueued = false;
-  if (currentRoute() !== 'estoque' || !projectId || !materials.length) return;
+  if (currentRoute() !== 'estoque' || !projectId) return;
   const buttons = $$('[data-tracking-stage]');
   if (!buttons.length) return;
 
@@ -178,11 +202,9 @@ function patch() {
     if (!stage) return;
     const pct = percent(stage.current, stage.total);
     const donut = $('.trk-donut', button);
-    const donutLabel = $('.trk-donut strong', button);
-    const count = $('.trk-stage-copy span', button);
-    if (donut) donut.style.setProperty('--value', pct.value);
-    if (donutLabel) donutLabel.textContent = pct.label;
-    if (count) count.textContent = `${stage.current} de ${stage.total} itens`;
+    setStyle(donut, '--value', String(pct.value));
+    setText($('.trk-donut strong', button), pct.label);
+    setText($('.trk-stage-copy span', button), `${stage.current} de ${stage.total} itens`);
   });
 
   const activeButton = $('[data-tracking-stage].active');
@@ -190,10 +212,8 @@ function patch() {
   const stage = data[activeStage];
   if (stage) {
     const pct = percent(stage.current, stage.total);
-    const progressText = $('.trk-progress-head strong');
-    const progressBar = $('.trk-progress i');
-    if (progressText) progressText.textContent = `${pct.label} · ${stage.current} de ${stage.total} itens`;
-    if (progressBar) progressBar.style.width = `${pct.value}%`;
+    setText($('.trk-progress-head strong'), `${pct.label} · ${stage.current} de ${stage.total} itens`);
+    setStyle($('.trk-progress i'), 'width', `${pct.value}%`);
     patchSummary(activeStage, data);
   }
 }
