@@ -1,5 +1,5 @@
 import './commitment-summary.js?v=20260803-0716';
-import './search-caret-fix.js?v=20260803-0828';
+import './search-caret-fix.js?v=20260803-0841';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
