@@ -1,0 +1,63 @@
+name: Fix Acompanhamento availability
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-acompanhamento-availability.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fix checked availability
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('public/acompanhamento-detail.js')
+          text = path.read_text(encoding='utf-8')
+          replacements = [
+            ("allocation, purchaseCommitted, receivedPurchaseQty, separableQty,\n  number, clamp, isPast",
+             "allocation, purchaseCommitted, receivedPurchaseQty, availableQty,\n  number, clamp, isPast"),
+            ("    const separable = separableQty(material);\n    const readyPending = Math.max(0, separable - separated);",
+             "    const checkedAvailable = availableQty(material);\n    const readyPending = Math.max(0, checkedAvailable - inPaint - separated);"),
+            ("      const separated = number(material.separatedQty);\n      const ready = Math.max(0, separableQty(material) - separated);\n      return { material, alloc, received, ready };",
+             "      const separated = number(material.separatedQty);\n      const paintSent = number(material.paintingSentQty);\n      const paintReturned = number(material.paintingReturnedQty);\n      const currentAwayAtPainting = Math.max(0, paintSent - paintReturned);\n      const ready = Math.max(0, availableQty(material) - currentAwayAtPainting - separated);\n      return { material, alloc, received, ready };"),
+            ("return `<section class=\"trk-progress-card\"><div class=\"trk-progress-head\"><span>${escapeHtml(meta.label)}</span><strong>${meta.label === '0%' ? '0%' : meta.label} · ${formatQty(meta.value)} de ${formatQty(meta.total)}</strong></div>",
+             "return `<section class=\"trk-progress-card\"><div class=\"trk-progress-head\"><span>${escapeHtml(meta.title)}</span><strong>${meta.label === '0%' ? '0%' : meta.label} · ${formatQty(meta.value)} de ${formatQty(meta.total)}</strong></div>")
+          ]
+          for old, new in replacements:
+            if old not in text:
+              raise SystemExit(f'Pattern not found: {old[:80]}')
+            text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+
+          route = Path('public/route-features.js')
+          route_text = route.read_text(encoding='utf-8')
+          old = "import './acompanhamento-detail.js?v=20260803-1505';"
+          new = "import './acompanhamento-detail.js?v=20260803-1512';"
+          if old not in route_text:
+            raise SystemExit('Acompanhamento cache marker not found')
+          route.write_text(route_text.replace(old, new, 1), encoding='utf-8')
+
+          index = Path('public/index.html')
+          index_text = index.read_text(encoding='utf-8')
+          old = './route-features.js?v=20260803-1505'
+          new = './route-features.js?v=20260803-1512'
+          if old not in index_text:
+            raise SystemExit('Route cache marker not found')
+          index.write_text(index_text.replace(old, new, 1), encoding='utf-8')
+          PY
+          node --check public/acompanhamento-detail.js
+          node --check public/route-features.js
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/acompanhamento-detail.js public/route-features.js public/index.html
+          git commit -m "Count checked materials by physical availability" || exit 0
+          git push
