@@ -1,6 +1,7 @@
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
 import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
+import { allocation, purchaseCommitted } from './material-flow.js?v=20260803-0959';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
@@ -124,6 +125,7 @@ function separationSummary(items = []) {
   let requiredQty = 0;
   let separatedQty = 0;
   let separatedItems = 0;
+  let purchasedItems = 0;
   let completedItems = 0;
 
   items.forEach(material => {
@@ -142,6 +144,8 @@ function separationSummary(items = []) {
     requiredQty += required;
     separatedQty += Math.min(separated, required || separated);
     if (separated > 0) separatedItems += 1;
+    const purchase = allocation(material);
+    if (purchase.purchaseQty > 0 && purchaseCommitted(material)) purchasedItems += 1;
     if (required > 0 && separated >= required) completedItems += 1;
 
     current.required += required;
@@ -165,6 +169,7 @@ function separationSummary(items = []) {
     requiredQty,
     separatedQty,
     separatedItems,
+    purchasedItems,
     completedItems,
     totalItems: items.length,
     categories: categoryList,
@@ -330,9 +335,9 @@ function projectCard(projectId, project) {
         ${donut(summary)}
       </div>
       <div class="sep-stats">
-        <div class="sep-stat"><strong>${summary.separatedItems}</strong><span>itens iniciados</span></div>
-        <div class="sep-stat"><strong>${summary.completedItems}</strong><span>concluídos</span></div>
         <div class="sep-stat"><strong>${summary.totalItems}</strong><span>itens da obra</span></div>
+        <div class="sep-stat"><strong>${summary.purchasedItems}</strong><span>itens comprados</span></div>
+        <div class="sep-stat"><strong>${summary.separatedItems}</strong><span>itens separados</span></div>
       </div>
       <div class="sep-category-preview">${categories}</div>
       ${remaining ? `<span class="sep-more">+ ${remaining} categoria${remaining === 1 ? '' : 's'}</span>` : ''}
@@ -498,10 +503,10 @@ function renderProjectDetail(view, projectId) {
         ${donut(summary, 108)}
       </section>
       <section class="sep-detail-summary">
-        <article class="sep-detail-metric"><span>Quantidade separada</span><strong>${formatQty(summary.separatedQty)}</strong></article>
-        <article class="sep-detail-metric"><span>Quantidade necessária</span><strong>${formatQty(summary.requiredQty)}</strong></article>
-        <article class="sep-detail-metric"><span>Itens com separação</span><strong>${summary.separatedItems}</strong></article>
-        <article class="sep-detail-metric"><span>Itens concluídos</span><strong>${summary.completedItems}</strong></article>
+        <article class="sep-detail-metric"><span>Itens da obra</span><strong>${summary.totalItems}</strong></article>
+        <article class="sep-detail-metric"><span>Itens comprados</span><strong>${summary.purchasedItems}</strong></article>
+        <article class="sep-detail-metric"><span>Itens separados</span><strong>${summary.separatedItems}</strong></article>
+        <article class="sep-detail-metric"><span>Quantidade separada</span><strong>${formatQty(summary.separatedQty)} / ${formatQty(summary.requiredQty)}</strong></article>
       </section>
       ${categoryStrip ? `<section class="sep-category-strip" aria-label="Progresso por categoria">${categoryStrip}</section>` : ''}
       ${separatedItems.length ? `
