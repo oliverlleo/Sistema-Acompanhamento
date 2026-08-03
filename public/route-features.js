@@ -12,6 +12,7 @@ import './materials-origin-status.js?v=20260803-1943';
 import './purchase-needs-action-filter.js?v=20260803-1958';
 import './global-receiving.js?v=20260803-2013';
 import './global-receiving-color.js?v=20260803-2030';
+import './user-role-permissions.js?v=20260803-2048';
 import './calendar.js?v=20260803-1950';
 import './calendar-focus-fix.js?v=20260803-1951';
 
