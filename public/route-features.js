@@ -10,6 +10,7 @@ import './tracking-card-availability.js?v=20260803-1958';
 import './tracking-category-progress.js?v=20260803-2007';
 import './materials-origin-status.js?v=20260803-1943';
 import './purchase-needs-action-filter.js?v=20260803-1958';
+import './global-receiving.js?v=20260803-2013';
 import './calendar.js?v=20260803-1950';
 import './calendar-focus-fix.js?v=20260803-1951';
 
