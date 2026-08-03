@@ -80,7 +80,7 @@ async function loadSeparatedProjectsFeature() {
   }
   loaded.separados = true;
   try {
-    await import('./separated-projects.js?v=20260803-1348');
+    await import('./separated-projects.js?v=20260803-1430');
     window.ObraFlowSeparatedProjects?.render?.();
   } catch (error) {
     loaded.separados = false;
