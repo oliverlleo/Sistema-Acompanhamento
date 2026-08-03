@@ -3,7 +3,7 @@ import './search-caret-fix.js?v=20260803-1025';
 import './direct-paint-delivery.js?v=20260803-1122';
 import './acompanhamento-detail.js?v=20260803-1512';
 import './tracking-item-counts.js?v=20260803-1548';
-import './tracking-available-summary.js?v=20260803-1558';
+import './tracking-available-summary.js?v=20260803-1608';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
