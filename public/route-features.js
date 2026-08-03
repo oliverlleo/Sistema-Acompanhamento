@@ -1,9 +1,9 @@
 import './commitment-summary.js?v=20260803-0959';
 import './search-caret-fix.js?v=20260803-1025';
-import './direct-paint-delivery.js?v=20260803-1122';
-import './acompanhamento-detail.js?v=20260803-1512';
-import './tracking-item-counts.js?v=20260803-1548';
-import './tracking-available-summary.js?v=20260803-1616';
+import './direct-paint-delivery.js?v=20260803-1648';
+import './acompanhamento-detail.js?v=20260803-1648';
+import './tracking-item-counts.js?v=20260803-1648';
+import './tracking-available-summary.js?v=20260803-1648';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -83,7 +83,7 @@ async function loadSeparatedProjectsFeature() {
   }
   loaded.separados = true;
   try {
-    await import('./separated-projects.js?v=20260803-1446');
+    await import('./separated-projects.js?v=20260803-1648');
     window.ObraFlowSeparatedProjects?.render?.();
   } catch (error) {
     loaded.separados = false;
@@ -103,7 +103,7 @@ async function loadRouteFeature() {
     if (!loaded.importar) {
       loaded.importar = true;
       try {
-        await import('./xlsx-import-fix.js?v=20260803-0932');
+        await import('./xlsx-import-fix.js?v=20260803-1648');
       } catch (error) {
         loaded.importar = false;
         console.error('Falha ao carregar importador XLSX:', error);

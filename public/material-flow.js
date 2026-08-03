@@ -19,8 +19,48 @@ export function number(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   if (value === null || value === undefined || value === '') return 0;
   let text = String(value).trim().replace(/\s/g, '');
-  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(text)) text = text.replace(/\./g, '').replace(',', '.');
-  else if (/^-?\d+(,\d+)$/.test(text)) text = text.replace(',', '.');
+  if (text.includes(',') && text.includes('.')) {
+    if (text.lastIndexOf(',') > text.lastIndexOf('.')) text = text.replace(/\./g, '').replace(',', '.');
+    else text = text.replace(/,/g, '');
+  } else if (text.includes(',')) {
+    text = text.replace(',', '.');
+  }
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function normalizedQuantityUnit(material = {}) {
+  return String(material.unit || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+export function isDecimalQuantity(material = {}) {
+  return ['m', 'm2', 'm²', 'metro', 'metros', 'kg'].includes(normalizedQuantityUnit(material));
+}
+
+export function quantityNumber(material = {}, value) {
+  if (value === null || value === undefined || value === '') return 0;
+
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return 0;
+    // Importações antigas salvaram 435.554 m como 435554.
+    if (isDecimalQuantity(material) && Number.isInteger(value) && Math.abs(value) >= 1000) return value / 1000;
+    return value;
+  }
+
+  let text = String(value).trim().replace(/\s/g, '');
+  if (!text) return 0;
+  if (text.includes(',') && text.includes('.')) {
+    if (text.lastIndexOf(',') > text.lastIndexOf('.')) text = text.replace(/\./g, '').replace(',', '.');
+    else text = text.replace(/,/g, '');
+  } else if (text.includes(',')) {
+    text = text.replace(',', '.');
+  } else if (text.includes('.') && !isDecimalQuantity(material) && /^-?\d{1,3}(\.\d{3})+$/.test(text)) {
+    text = text.replace(/\./g, '');
+  }
   const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : 0;
 }
@@ -34,7 +74,7 @@ export function isPast(date) {
 }
 
 export function allocation(material = {}) {
-  const required = Math.max(0, number(material.qtyRequired));
+  const required = Math.max(0, quantityNumber(material, material.qtyRequired));
   const source = material.source || 'pendente';
 
   if (source === 'estoque') {
@@ -44,9 +84,9 @@ export function allocation(material = {}) {
     return { required, source, stockQty: 0, purchaseQty: required, unallocatedQty: 0 };
   }
   if (source === 'misto') {
-    const stockQty = clamp(number(material.stockRequiredQty), 0, required);
+    const stockQty = clamp(quantityNumber(material, material.stockRequiredQty), 0, required);
     const explicitPurchase = material.purchaseRequiredQty !== undefined && material.purchaseRequiredQty !== null && material.purchaseRequiredQty !== '';
-    const purchaseQty = clamp(explicitPurchase ? number(material.purchaseRequiredQty) : required - stockQty, 0, required - stockQty);
+    const purchaseQty = clamp(explicitPurchase ? quantityNumber(material, material.purchaseRequiredQty) : required - stockQty, 0, required - stockQty);
     const unallocatedQty = Math.max(0, required - stockQty - purchaseQty);
     return { required, source, stockQty, purchaseQty, unallocatedQty };
   }
@@ -57,13 +97,13 @@ export function purchaseCommitted(material = {}) {
   const { purchaseQty } = allocation(material);
   if (purchaseQty <= 0) return true;
   if (material.purchaseDate || material.orderNumber) return true;
-  if (number(material.qtyReceived) > 0) return true;
+  if (quantityNumber(material, material.qtyReceived) > 0) return true;
   return ['aguardando_entrega', 'compra_atrasada', 'recebido_parcial'].includes(material.status);
 }
 
 export function receivedPurchaseQty(material = {}) {
   const { purchaseQty } = allocation(material);
-  return clamp(number(material.qtyReceived), 0, purchaseQty);
+  return clamp(quantityNumber(material, material.qtyReceived), 0, purchaseQty);
 }
 
 export function availableQty(material = {}) {
@@ -75,7 +115,7 @@ export function separableQty(material = {}) {
   const { required } = allocation(material);
   const available = availableQty(material);
   if (!material.paintingRequired) return available;
-  return clamp(number(material.paintingReturnedQty), 0, Math.min(required, available));
+  return clamp(quantityNumber(material, material.paintingReturnedQty), 0, Math.min(required, available));
 }
 
 export function committedQty(material = {}) {
@@ -95,12 +135,12 @@ export function purchaseNeedsAction(material = {}) {
 
 export function deriveStatus(material = {}) {
   const { required, stockQty, purchaseQty, unallocatedQty } = allocation(material);
-  const delivered = clamp(number(material.siteDeliveredQty), 0, required || Number.MAX_SAFE_INTEGER);
-  const separated = clamp(number(material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
+  const delivered = clamp(quantityNumber(material, material.siteDeliveredQty), 0, required || Number.MAX_SAFE_INTEGER);
+  const separated = clamp(quantityNumber(material, material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
   const received = receivedPurchaseQty(material);
   const available = availableQty(material);
-  const paintSent = clamp(number(material.paintingSentQty), 0, available || Number.MAX_SAFE_INTEGER);
-  const paintReturned = clamp(number(material.paintingReturnedQty), 0, paintSent || Number.MAX_SAFE_INTEGER);
+  const paintSent = clamp(quantityNumber(material, material.paintingSentQty), 0, available || Number.MAX_SAFE_INTEGER);
+  const paintReturned = clamp(quantityNumber(material, material.paintingReturnedQty), 0, paintSent || Number.MAX_SAFE_INTEGER);
 
   if (required > 0 && delivered >= required) return 'enviado_obra';
   if (delivered > 0) return 'enviado_parcial';
@@ -179,8 +219,8 @@ export function summaryForMaterials(materials = {}) {
     const alloc = allocation(material);
     const status = deriveStatus(material);
     const received = receivedPurchaseQty(material);
-    const separated = number(material.separatedQty);
-    const delivered = number(material.siteDeliveredQty);
+    const separated = quantityNumber(material, material.separatedQty);
+    const delivered = quantityNumber(material, material.siteDeliveredQty);
     const separable = separableQty(material);
     const committed = committedQty(material);
 
@@ -205,7 +245,7 @@ export function summaryForMaterials(materials = {}) {
 
     if (material.paintingRequired && !['separado', 'enviado_parcial', 'enviado_obra'].includes(status)) {
       if (status === 'pintura_atrasada') summary.pinturaAtrasada += 1;
-      else if (availableQty(material) > 0 || number(material.paintingSentQty) > 0) summary.pintura += 1;
+      else if (availableQty(material) > 0 || quantityNumber(material, material.paintingSentQty) > 0) summary.pintura += 1;
     }
 
     if (separable > separated || (separated > delivered && delivered < alloc.required)) summary.separar += 1;

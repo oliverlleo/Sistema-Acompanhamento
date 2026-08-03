@@ -1,3 +1,4 @@
+import { quantityNumber } from './material-flow.js?v=20260803-1648';
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
 import {
@@ -102,6 +103,27 @@ function num(value) {
   const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : 0;
 }
+
+function quantityNum(value, unit = '') {
+  if (value === null || value === undefined || value === '') return 0;
+  const normalizedUnit = String(unit || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  const decimalUnit = ['m', 'm2', 'm²', 'metro', 'metros', 'kg'].includes(normalizedUnit);
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return 0;
+    if (decimalUnit && Number.isInteger(value) && Math.abs(value) >= 1000) return value / 1000;
+    return value;
+  }
+  let text = String(value).trim().replace(/\s/g, '');
+  if (!text) return 0;
+  if (text.includes(',') && text.includes('.')) {
+    if (text.lastIndexOf(',') > text.lastIndexOf('.')) text = text.replace(/\./g, '').replace(',', '.');
+    else text = text.replace(/,/g, '');
+  } else if (text.includes(',')) text = text.replace(',', '.');
+  else if (text.includes('.') && !decimalUnit && /^-?\d{1,3}(\.\d{3})+$/.test(text)) text = text.replace(/\./g, '');
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 
 function formatQty(value) {
   return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(num(value));
@@ -314,9 +336,10 @@ function normalizeSheetRows(workbook, sheetName, defaultSource, defaultPainting)
     };
 
     const rawQuantity = getField('quantity');
-    let quantity = num(rawQuantity);
+    const importedUnit = String(getField('unit') || '').trim();
+    let quantity = quantityNum(rawQuantity, importedUnit || 'un');
     let quantityFromUnitValue = false;
-    const unitValue = num(getField('unitValue'));
+    const unitValue = quantityNum(getField('unitValue'), 'm');
 
     if (quantity <= 0 && (rawQuantity === '' || rawQuantity === null || rawQuantity === undefined) && unitValue > 0) {
       quantity = unitValue;
@@ -366,7 +389,7 @@ function normalizeSheetRows(workbook, sheetName, defaultSource, defaultPainting)
       continue;
     }
 
-    let unit = String(getField('unit') || '').trim();
+    let unit = importedUnit;
     if (!unit) unit = quantityFromUnitValue ? 'm' : 'un';
 
     const width = getField('width');
@@ -421,14 +444,14 @@ function normalizeSheetRows(workbook, sheetName, defaultSource, defaultPainting)
 }
 
 function deriveStatus(material) {
-  const required = Math.max(0, num(material.qtyRequired));
-  const delivered = num(material.siteDeliveredQty);
-  const separated = num(material.separatedQty);
-  const received = num(material.qtyReceived);
-  const reserved = num(material.stockReservedQty);
+  const required = Math.max(0, quantityNumber(material, material.qtyRequired));
+  const delivered = quantityNumber(material, material.siteDeliveredQty);
+  const separated = quantityNumber(material, material.separatedQty);
+  const received = quantityNumber(material, material.qtyReceived);
+  const reserved = quantityNumber(material, material.stockReservedQty);
   const available = material.source === 'estoque' ? reserved : received;
-  const paintSent = num(material.paintingSentQty);
-  const paintReturned = num(material.paintingReturnedQty);
+  const paintSent = quantityNumber(material, material.paintingSentQty);
+  const paintReturned = quantityNumber(material, material.paintingReturnedQty);
 
   if (required > 0 && delivered >= required) return 'enviado_obra';
   if (delivered > 0) return 'enviado_parcial';

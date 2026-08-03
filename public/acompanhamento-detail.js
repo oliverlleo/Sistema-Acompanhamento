@@ -2,8 +2,7 @@ import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebase
 import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
 import {
   allocation, purchaseCommitted, receivedPurchaseQty, availableQty,
-  number, clamp, isPast
-} from './material-flow.js?v=20260803-0959';
+  number, clamp, isPast, quantityNumber} from './material-flow.js?v=20260803-1648';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
@@ -140,9 +139,9 @@ function stageData(items) {
     const alloc = allocation(material);
     const required = alloc.required;
     const received = receivedPurchaseQty(material);
-    const separated = clamp(number(material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
-    const paintSent = clamp(number(material.paintingSentQty), 0, required || Number.MAX_SAFE_INTEGER);
-    const paintReturned = clamp(number(material.paintingReturnedQty), 0, paintSent || Number.MAX_SAFE_INTEGER);
+    const separated = clamp(quantityNumber(material, material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
+    const paintSent = clamp(quantityNumber(material, material.paintingSentQty), 0, required || Number.MAX_SAFE_INTEGER);
+    const paintReturned = clamp(quantityNumber(material, material.paintingReturnedQty), 0, paintSent || Number.MAX_SAFE_INTEGER);
     const inPaint = Math.max(0, paintSent - paintReturned);
     const checkedAvailable = availableQty(material);
     const readyPending = Math.max(0, checkedAvailable - inPaint - separated);
@@ -307,11 +306,11 @@ function purchaseRows(items) {
     .map(material => {
       const alloc = allocation(material);
       const committed = purchaseCommitted(material);
-      const overdue = committed && number(material.qtyReceived) < alloc.purchaseQty && isPast(material.deliveryEta);
+      const overdue = committed && quantityNumber(material, material.qtyReceived) < alloc.purchaseQty && isPast(material.deliveryEta);
       const search = normalize([material.code, material.description, material.category, material.supplier, material.orderNumber, material.deliveryEta].filter(Boolean).join(' '));
       return `<tr data-tracking-row data-search="${escapeHtml(search)}">
         <td>${materialCell(material)}</td><td>${escapeHtml(material.category || 'Sem categoria')}</td>
-        <td class="trk-qty">${formatQty(alloc.purchaseQty)} ${escapeHtml(material.unit || 'un')}</td>
+        <td class="trk-qty">${formatQty(quantityNumber(alloc, alloc.purchaseQty))} ${escapeHtml(material.unit || 'un')}</td>
         <td>${committed ? statusPill('Compra registrada', overdue ? 'danger' : 'ok') : statusPill('Falta comprar', 'warn')}</td>
         <td>${escapeHtml(material.supplier || '—')}<span class="trk-sub">${escapeHtml(material.orderNumber || '')}</span></td>
         <td>${formatDate(material.purchaseDate)}</td><td>${dateWithAlert(material.deliveryEta, overdue)}</td>
@@ -323,13 +322,13 @@ function paintingRows(items) {
   return items
     .filter(material => material.paintingRequired)
     .sort((a, b) => {
-      const aCurrent = Math.max(0, number(a.paintingSentQty) - number(a.paintingReturnedQty));
-      const bCurrent = Math.max(0, number(b.paintingSentQty) - number(b.paintingReturnedQty));
+      const aCurrent = Math.max(0, quantityNumber(a, a.paintingSentQty) - quantityNumber(a, a.paintingReturnedQty));
+      const bCurrent = Math.max(0, quantityNumber(b, b.paintingSentQty) - quantityNumber(b, b.paintingReturnedQty));
       return Number(bCurrent > 0) - Number(aCurrent > 0) || String(a.paintingEta || '9999').localeCompare(String(b.paintingEta || '9999'));
     })
     .map(material => {
-      const sent = number(material.paintingSentQty);
-      const returned = number(material.paintingReturnedQty);
+      const sent = quantityNumber(material, material.paintingSentQty);
+      const returned = quantityNumber(material, material.paintingReturnedQty);
       const current = Math.max(0, sent - returned);
       const overdue = current > 0 && isPast(material.paintingEta);
       const status = current > 0 ? (overdue ? statusPill('Pintura atrasada', 'danger') : statusPill('Em pintura', 'violet'))
@@ -350,9 +349,9 @@ function availableRows(items) {
     .map(material => {
       const alloc = allocation(material);
       const received = receivedPurchaseQty(material);
-      const separated = number(material.separatedQty);
-      const paintSent = number(material.paintingSentQty);
-      const paintReturned = number(material.paintingReturnedQty);
+      const separated = quantityNumber(material, material.separatedQty);
+      const paintSent = quantityNumber(material, material.paintingSentQty);
+      const paintReturned = quantityNumber(material, material.paintingReturnedQty);
       const currentAwayAtPainting = Math.max(0, paintSent - paintReturned);
       const ready = Math.max(0, availableQty(material) - currentAwayAtPainting - separated);
       return { material, alloc, received, ready };
@@ -365,7 +364,7 @@ function availableRows(items) {
       return `<tr data-tracking-row data-search="${escapeHtml(search)}">
         <td>${materialCell(material)}</td><td>${escapeHtml(material.category || 'Sem categoria')}</td>
         <td>${statusPill(origin, alloc.source === 'estoque' ? 'violet' : alloc.source === 'misto' ? 'warn' : 'info')}</td>
-        <td class="trk-qty">${formatQty(alloc.stockQty)} ${escapeHtml(material.unit || 'un')}</td>
+        <td class="trk-qty">${formatQty(quantityNumber(alloc, alloc.stockQty))} ${escapeHtml(material.unit || 'un')}</td>
         <td class="trk-qty">${formatQty(received)} ${escapeHtml(material.unit || 'un')}</td>
         <td class="trk-qty">${formatQty(ready)} ${escapeHtml(material.unit || 'un')}</td>
         <td>${formatDate(receivedDate(material))}</td>
@@ -375,11 +374,11 @@ function availableRows(items) {
 
 function separatedRows(items) {
   return items
-    .filter(material => number(material.separatedQty) > 0)
+    .filter(material => quantityNumber(material, material.separatedQty) > 0)
     .sort((a, b) => String(b.separatedDate || '').localeCompare(String(a.separatedDate || '')) || String(a.description || '').localeCompare(String(b.description || ''), 'pt-BR'))
     .map(material => {
       const required = allocation(material).required;
-      const separated = clamp(number(material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
+      const separated = clamp(quantityNumber(material, material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
       const complete = required > 0 && separated >= required;
       const identity = materialIdentity(material);
       const search = normalize([material.code, material.description, material.category, identity.measure, material.color, material.separatedDate].filter(Boolean).join(' '));
@@ -422,29 +421,29 @@ function summaryHtml(key, data) {
       metric('Itens que precisam de compra', String(data.purchaseItems)),
       metric('Itens comprados', String(data.purchasedItems)),
       metric('Itens que faltam comprar', String(data.missingPurchaseItems)),
-      metric('Quantidade comprada', `${formatQty(data.purchasedQty)} / ${formatQty(data.purchaseRequired)}`, data.nearestDeliveryEta ? `Próximo prazo: ${formatDate(data.nearestDeliveryEta)}` : 'Sem prazo registrado')
+      metric('Quantidade comprada', `${formatQty(quantityNumber(data, data.purchasedQty))} / ${formatQty(data.purchaseRequired)}`, data.nearestDeliveryEta ? `Próximo prazo: ${formatDate(data.nearestDeliveryEta)}` : 'Sem prazo registrado')
     ].join('');
   }
   if (key === 'pintura') {
     return [
       metric('Itens em pintura agora', String(data.paintingItems)),
-      metric('Quantidade em pintura', formatQty(data.inPaintingQty)),
-      metric('Quantidade já retornada', formatQty(data.paintingReturnedQty)),
+      metric('Quantidade em pintura', formatQty(quantityNumber(data, data.inPaintingQty))),
+      metric('Quantidade já retornada', formatQty(quantityNumber(data, data.paintingReturnedQty))),
       metric('Próximo retorno', formatDate(data.nearestPaintingEta), data.nearestPaintingEta && isPast(data.nearestPaintingEta) ? 'Prazo vencido' : '')
     ].join('');
   }
   if (key === 'disponivel') {
     return [
       metric('Itens disponíveis', String(data.readyItems)),
-      metric('Quantidade não separada', formatQty(data.readyQty)),
-      metric('Quantidade de estoque', formatQty(data.readyStockQty)),
-      metric('Quantidade recebida da compra', formatQty(data.readyReceivedQty))
+      metric('Quantidade não separada', formatQty(quantityNumber(data, data.readyQty))),
+      metric('Quantidade de estoque', formatQty(quantityNumber(data, data.readyStockQty))),
+      metric('Quantidade recebida da compra', formatQty(quantityNumber(data, data.readyReceivedQty)))
     ].join('');
   }
   return [
     metric('Itens com separação', String(data.separatedItems)),
     metric('Itens totalmente separados', String(data.completedSeparatedItems)),
-    metric('Quantidade separada', `${formatQty(data.separatedQty)} / ${formatQty(data.totalRequired)}`),
+    metric('Quantidade separada', `${formatQty(quantityNumber(data, data.separatedQty))} / ${formatQty(data.totalRequired)}`),
     metric('Última separação', formatDate(data.latestSeparatedDate))
   ].join('');
 }

@@ -1,8 +1,7 @@
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
 import {
-  allocation, purchaseCommitted, availableQty, number, clamp
-} from './material-flow.js?v=20260803-0959';
+  allocation, purchaseCommitted, availableQty, number, clamp, quantityNumber} from './material-flow.js?v=20260803-1648';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
@@ -76,9 +75,9 @@ function stageData() {
   materials.forEach(material => {
     const alloc = allocation(material);
     const required = alloc.required;
-    const separated = clamp(number(material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
-    const paintSent = clamp(number(material.paintingSentQty), 0, required || Number.MAX_SAFE_INTEGER);
-    const paintReturned = clamp(number(material.paintingReturnedQty), 0, paintSent || Number.MAX_SAFE_INTEGER);
+    const separated = clamp(quantityNumber(material, material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
+    const paintSent = clamp(quantityNumber(material, material.paintingSentQty), 0, required || Number.MAX_SAFE_INTEGER);
+    const paintReturned = clamp(quantityNumber(material, material.paintingReturnedQty), 0, paintSent || Number.MAX_SAFE_INTEGER);
     const inPaint = Math.max(0, paintSent - paintReturned);
     const checkedPending = Math.max(0, availableQty(material) - inPaint - separated);
 
@@ -163,10 +162,10 @@ function patchSummary(activeStage, data) {
       metric('Itens comprados', `${data.purchasedItems} de ${data.purchaseItems}`),
       metric(
         'Quantidade comprada',
-        `${formatQty(data.purchasedQty)} un de ${formatQty(data.purchaseRequiredQty)} un`,
+        `${formatQty(quantityNumber(data, data.purchasedQty))} un de ${formatQty(quantityNumber(data, data.purchaseRequiredQty))} un`,
         data.nearestDeliveryEta ? `Próximo prazo: ${formatDate(data.nearestDeliveryEta)}` : 'Sem prazo registrado'
       ),
-      metric('Falta comprar', `${data.missingPurchaseItems} itens — ${formatQty(data.missingPurchaseQty)} unidades`)
+      metric('Falta comprar', `${data.missingPurchaseItems} itens — ${formatQty(quantityNumber(data, data.missingPurchaseQty))} unidades`)
     );
     return;
   }
@@ -182,8 +181,8 @@ function patchSummary(activeStage, data) {
     summary.dataset.itemSummarySignature = signature;
     summary.replaceChildren(
       metric('Itens em pintura agora', `${data.inPaintingItems} de ${data.paintingRequiredItems}`),
-      metric('Quantidade em pintura', `${formatQty(data.inPaintingQty)} un de ${formatQty(data.paintingRequiredQty)} un`),
-      metric('Quantidade já retornada', `${formatQty(data.paintingReturnedQty)} un`),
+      metric('Quantidade em pintura', `${formatQty(quantityNumber(data, data.inPaintingQty))} un de ${formatQty(quantityNumber(data, data.paintingRequiredQty))} un`),
+      metric('Quantidade já retornada', `${formatQty(quantityNumber(data, data.paintingReturnedQty))} un`),
       metric('Próximo retorno', formatDate(data.nearestPaintingEta))
     );
   }

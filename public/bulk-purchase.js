@@ -5,8 +5,7 @@ import {
   allocation,
   deriveStatus,
   purchaseNeedsAction,
-  summaryForMaterials
-} from './material-flow.js?v=20260803-0959';
+  summaryForMaterials, quantityNumber} from './material-flow.js?v=20260803-1648';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
