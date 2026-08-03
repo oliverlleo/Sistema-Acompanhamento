@@ -1,3 +1,5 @@
+import './commitment-summary.js?v=20260803-0716';
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
