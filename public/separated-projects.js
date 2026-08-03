@@ -24,6 +24,8 @@ let selectedProjectId = '';
 let stopProjects = null;
 let stopMaterials = null;
 let started = false;
+let projectsReady = false;
+let materialsReady = false;
 
 function number(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
@@ -53,6 +55,15 @@ function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
   })[character]);
+}
+
+function normalize(value = '') {
+  return String(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+    .toLowerCase();
 }
 
 function firstUseful(...values) {
@@ -97,6 +108,17 @@ function projectMaterials(projectId) {
   return Object.values(materialsByProject[projectId] || {});
 }
 
+function percentMeta(separated, required) {
+  const exact = required > 0 ? clamp((separated / required) * 100, 0, 100) : 0;
+  const rounded = Math.round(exact);
+  return {
+    exact,
+    rounded,
+    visual: exact > 0 ? Math.max(1.2, exact) : 0,
+    label: exact > 0 && exact < 1 ? '<1%' : `${rounded}%`
+  };
+}
+
 function separationSummary(items = []) {
   const categories = new Map();
   let requiredQty = 0;
@@ -107,8 +129,15 @@ function separationSummary(items = []) {
   items.forEach(material => {
     const required = Math.max(0, number(material.qtyRequired));
     const separated = clamp(number(material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
-    const category = String(material.category || 'Sem categoria').trim() || 'Sem categoria';
-    const current = categories.get(category) || { name: category, required: 0, separated: 0, items: 0, separatedItems: 0 };
+    const categoryName = String(material.category || 'Sem categoria').trim() || 'Sem categoria';
+    const current = categories.get(categoryName) || {
+      name: categoryName,
+      required: 0,
+      separated: 0,
+      items: 0,
+      separatedItems: 0,
+      completedItems: 0
+    };
 
     requiredQty += required;
     separatedQty += Math.min(separated, required || separated);
@@ -119,15 +148,18 @@ function separationSummary(items = []) {
     current.separated += Math.min(separated, required || separated);
     current.items += 1;
     if (separated > 0) current.separatedItems += 1;
-    categories.set(category, current);
+    if (required > 0 && separated >= required) current.completedItems += 1;
+    categories.set(categoryName, current);
   });
 
   const categoryList = [...categories.values()]
-    .map(category => ({
-      ...category,
-      percent: category.required ? clamp(Math.round((category.separated / category.required) * 100), 0, 100) : 0
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    .map(category => ({ ...category, ...percentMeta(category.separated, category.required) }))
+    .sort((a, b) => {
+      const active = Number(b.separated > 0) - Number(a.separated > 0);
+      if (active) return active;
+      if (b.exact !== a.exact) return b.exact - a.exact;
+      return a.name.localeCompare(b.name, 'pt-BR');
+    });
 
   return {
     requiredQty,
@@ -135,8 +167,8 @@ function separationSummary(items = []) {
     separatedItems,
     completedItems,
     totalItems: items.length,
-    percent: requiredQty ? clamp(Math.round((separatedQty / requiredQty) * 100), 0, 100) : 0,
-    categories: categoryList
+    categories: categoryList,
+    ...percentMeta(separatedQty, requiredQty)
   };
 }
 
@@ -145,10 +177,10 @@ function statusForMaterial(material) {
   const separated = number(material.separatedQty);
   const delivered = number(material.siteDeliveredQty);
 
-  if (required > 0 && delivered >= required) return ['Enviado para obra', 'ok'];
-  if (delivered > 0) return ['Envio parcial', 'warning'];
-  if (required > 0 && separated >= required) return ['Separação concluída', 'success'];
-  return ['Separação parcial', 'warning'];
+  if (required > 0 && delivered >= required) return ['Enviado para obra', 'sent'];
+  if (delivered > 0) return ['Envio parcial', 'partial'];
+  if (required > 0 && separated >= required) return ['Separação concluída', 'done'];
+  return ['Separação parcial', 'partial'];
 }
 
 function ensureStyle() {
@@ -156,72 +188,209 @@ function ensureStyle() {
   const style = document.createElement('style');
   style.id = 'separatedProjectsStyle';
   style.textContent = `
-    .separated-project-grid{grid-template-columns:repeat(auto-fit,minmax(340px,1fr));align-items:start}
-    .separated-project-card{cursor:pointer;transition:transform .16s ease,box-shadow .16s ease}
-    .separated-project-card:hover{transform:translateY(-2px);box-shadow:0 14px 32px rgba(15,23,42,.10)}
-    .separated-project-card .progress{margin-top:16px}
-    .separated-category-list{display:grid;gap:10px;margin-top:16px}
-    .separated-category-row{display:grid;grid-template-columns:minmax(110px,1fr) minmax(110px,1.4fr) 48px;gap:10px;align-items:center;font-size:12px}
-    .separated-category-name{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .separated-mini-progress{height:7px;border-radius:999px;background:var(--surface-3,#e8edf2);overflow:hidden}
-    .separated-mini-progress>span{display:block;height:100%;border-radius:inherit;background:var(--primary,#0f766e)}
-    .separated-category-percent{text-align:right;font-weight:800;color:var(--muted)}
-    .separated-card-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:18px;padding-top:14px;border-top:1px solid var(--border)}
-    .separated-detail-categories{grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:16px}
-    .separated-category-card{padding:16px}
-    .separated-category-card strong{display:block;font-size:22px;margin-top:6px}
-    .separated-table .qty-track{min-width:120px}
-    @media(max-width:720px){.separated-category-row{grid-template-columns:1fr 70px}.separated-mini-progress{grid-column:1/-1;grid-row:2}.separated-project-grid{grid-template-columns:1fr}}
+    .sep-shell{display:grid;gap:18px}
+    .sep-toolbar{display:flex;align-items:center;gap:14px;padding:14px 16px;background:#fff;border:1px solid var(--border);border-radius:16px;box-shadow:0 5px 18px rgba(15,23,42,.035)}
+    .sep-search{position:relative;flex:1;min-width:220px}
+    .sep-search svg{position:absolute;left:14px;top:50%;width:18px;height:18px;transform:translateY(-50%);stroke:#64748b;pointer-events:none}
+    .sep-search input{width:100%;height:44px;padding:0 14px 0 42px;border:1px solid #d8e0e8;border-radius:12px;background:#f8fafc;font:inherit;color:var(--text);outline:none;transition:border-color .15s,box-shadow .15s,background .15s}
+    .sep-search input:focus{background:#fff;border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.12)}
+    .sep-toolbar-count{display:flex;align-items:baseline;gap:6px;white-space:nowrap;padding:0 4px}
+    .sep-toolbar-count strong{font-size:20px;color:#0f172a}
+    .sep-toolbar-count span{font-size:12px;color:#64748b}
+    .sep-project-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:16px;align-items:start}
+    .sep-project-card{position:relative;display:flex;flex-direction:column;min-height:300px;padding:20px;background:#fff;border:1px solid #dfe6ed;border-radius:18px;box-shadow:0 6px 18px rgba(15,23,42,.045);cursor:pointer;overflow:hidden;transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+    .sep-project-card:hover{transform:translateY(-3px);border-color:rgba(15,118,110,.36);box-shadow:0 15px 34px rgba(15,23,42,.10)}
+    .sep-project-card:focus-visible{outline:3px solid rgba(15,118,110,.22);outline-offset:2px}
+    .sep-project-card::before{content:'';position:absolute;inset:0 0 auto;height:4px;background:linear-gradient(90deg,#0f766e,#14b8a6)}
+    .sep-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+    .sep-card-copy{min-width:0;padding-top:2px}
+    .sep-project-code{display:inline-flex;align-items:center;min-height:23px;padding:3px 9px;border-radius:999px;background:#ecfdf5;color:#047857;font-size:11px;font-weight:800;letter-spacing:.035em}
+    .sep-card-copy h3{margin:10px 0 3px;font-size:20px;line-height:1.18;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sep-card-copy p{margin:0;color:#64748b;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sep-donut{--value:0;--size:92px;position:relative;display:grid;place-items:center;flex:0 0 var(--size);width:var(--size);height:var(--size);border-radius:50%;background:conic-gradient(#0f766e calc(var(--value)*1%),#e8eef3 0);box-shadow:inset 0 0 0 1px rgba(15,23,42,.03)}
+    .sep-donut::after{content:'';position:absolute;inset:9px;border-radius:50%;background:#fff;box-shadow:0 0 0 1px rgba(15,23,42,.035)}
+    .sep-donut-label{position:relative;z-index:1;display:grid;place-items:center;line-height:1;text-align:center}
+    .sep-donut-label strong{font-size:20px;color:#0f172a}
+    .sep-donut-label small{margin-top:5px;color:#64748b;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+    .sep-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:18px 0 14px}
+    .sep-stat{min-width:0;padding:10px 9px;border-radius:12px;background:#f8fafc;border:1px solid #edf1f5}
+    .sep-stat strong{display:block;color:#0f172a;font-size:16px;line-height:1.1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sep-stat span{display:block;margin-top:4px;color:#64748b;font-size:10px;font-weight:600}
+    .sep-category-preview{display:grid;gap:7px}
+    .sep-category-line{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:7px 9px;border-radius:10px;background:#fbfcfd;border:1px solid #edf1f4}
+    .sep-category-line span{min-width:0;color:#334155;font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sep-category-line strong{color:#0f766e;font-size:11px}
+    .sep-more{display:inline-flex;align-items:center;align-self:flex-start;margin-top:2px;color:#64748b;font-size:11px;font-weight:700}
+    .sep-card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:auto;padding-top:16px}
+    .sep-qty-summary{min-width:0;color:#64748b;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sep-open{display:inline-flex;align-items:center;gap:6px;color:#0f766e;font-size:12px;font-weight:800}
+    .sep-open svg{width:15px;height:15px;stroke:currentColor}
+    .sep-no-results{grid-column:1/-1}
+    .sep-detail-top{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:22px;background:linear-gradient(135deg,#0f172a 0%,#123b3b 100%);border-radius:20px;color:#fff;box-shadow:0 14px 30px rgba(15,23,42,.14)}
+    .sep-detail-top h2{margin:8px 0 4px;color:#fff;font-size:26px}
+    .sep-detail-top p{margin:0;color:rgba(255,255,255,.72)}
+    .sep-detail-top .sep-project-code{background:rgba(255,255,255,.12);color:#d1fae5}
+    .sep-detail-top .sep-donut::after{background:#123131}
+    .sep-detail-top .sep-donut-label strong{color:#fff}
+    .sep-detail-top .sep-donut-label small{color:rgba(255,255,255,.65)}
+    .sep-detail-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    .sep-detail-metric{padding:16px;background:#fff;border:1px solid var(--border);border-radius:15px;box-shadow:0 5px 16px rgba(15,23,42,.035)}
+    .sep-detail-metric span{display:block;color:#64748b;font-size:11px;font-weight:700}
+    .sep-detail-metric strong{display:block;margin-top:6px;color:#0f172a;font-size:21px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sep-category-strip{display:flex;gap:10px;overflow:auto;padding:2px 1px 6px;scrollbar-width:thin}
+    .sep-category-pill{flex:0 0 180px;padding:13px 14px;background:#fff;border:1px solid var(--border);border-radius:14px}
+    .sep-category-pill-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .sep-category-pill-head span{min-width:0;color:#334155;font-size:11px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sep-category-pill-head strong{font-size:12px;color:#0f766e}
+    .sep-mini-track{height:6px;margin:10px 0 7px;border-radius:999px;background:#e8eef3;overflow:hidden}
+    .sep-mini-track i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#0f766e,#14b8a6)}
+    .sep-category-pill small{color:#64748b;font-size:10px}
+    .sep-table-card{background:#fff;border:1px solid var(--border);border-radius:17px;overflow:hidden;box-shadow:0 5px 16px rgba(15,23,42,.035)}
+    .sep-table-toolbar{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border)}
+    .sep-table-toolbar .sep-search{max-width:520px}
+    .sep-table-count{margin-left:auto;color:#64748b;font-size:12px;font-weight:700;white-space:nowrap}
+    .sep-table-wrap{overflow:auto}
+    .sep-table{width:100%;border-collapse:collapse}
+    .sep-table th{padding:12px 14px;background:#f8fafc;color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.045em;text-align:left;white-space:nowrap;border-bottom:1px solid var(--border)}
+    .sep-table td{padding:13px 14px;border-bottom:1px solid #edf1f4;vertical-align:middle;font-size:12px;color:#334155}
+    .sep-table tr:last-child td{border-bottom:0}
+    .sep-table tr:hover td{background:#fbfdfd}
+    .sep-material-main{display:block;max-width:360px;color:#0f172a;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sep-material-sub{display:block;margin-top:4px;color:#64748b;font-size:10px}
+    .sep-qty{min-width:145px}
+    .sep-qty strong{display:block;color:#0f172a;font-size:12px}
+    .sep-row-track{height:5px;margin-top:7px;border-radius:999px;background:#e8eef3;overflow:hidden}
+    .sep-row-track i{display:block;height:100%;border-radius:inherit;background:#0f766e}
+    .sep-status{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;font-size:10px;font-weight:800;white-space:nowrap}
+    .sep-status-done{background:#dcfce7;color:#166534}
+    .sep-status-partial{background:#fff7ed;color:#c2410c}
+    .sep-status-sent{background:#e0f2fe;color:#075985}
+    .sep-back{display:inline-flex;align-items:center;gap:7px;margin-bottom:12px}
+    @media(max-width:980px){.sep-detail-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:720px){
+      .sep-toolbar{align-items:stretch;flex-direction:column}.sep-toolbar-count{justify-content:flex-end}
+      .sep-project-grid{grid-template-columns:1fr}.sep-project-card{min-height:auto}
+      .sep-card-head{gap:12px}.sep-donut{--size:78px}.sep-donut-label strong{font-size:17px}
+      .sep-detail-top{align-items:flex-start}.sep-detail-top h2{font-size:22px}
+      .sep-detail-summary{grid-template-columns:1fr 1fr}.sep-table-toolbar{align-items:stretch;flex-direction:column}.sep-table-count{margin-left:0}
+    }
   `;
   document.head.appendChild(style);
 }
 
-function emptyState(icon, title, text) {
-  return `<div class="card"><div class="empty"><div><div class="empty-icon">${icon}</div><h3>${escapeHtml(title)}</h3><p>${escapeHtml(text)}</p></div></div></div>`;
+function searchIcon() {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>';
+}
+
+function arrowIcon() {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>';
+}
+
+function donut(summary, size = 92) {
+  return `
+    <div class="sep-donut" style="--value:${summary.visual};--size:${size}px" aria-label="${summary.label} separado">
+      <div class="sep-donut-label"><strong>${summary.label}</strong><small>separado</small></div>
+    </div>`;
+}
+
+function emptyState(icon, title, text, extraClass = '') {
+  return `<div class="card ${extraClass}"><div class="empty"><div><div class="empty-icon">${icon}</div><h3>${escapeHtml(title)}</h3><p>${escapeHtml(text)}</p></div></div></div>`;
+}
+
+function projectSearchText(projectId, project) {
+  return normalize([
+    project.code,
+    project.name,
+    project.client,
+    project.address,
+    project.responsible,
+    ...separationSummary(projectMaterials(projectId)).categories.map(category => category.name)
+  ].filter(Boolean).join(' '));
 }
 
 function projectCard(projectId, project) {
   const summary = separationSummary(projectMaterials(projectId));
-  const categories = summary.categories.length
-    ? summary.categories.map(category => `
-        <div class="separated-category-row">
-          <span class="separated-category-name" title="${escapeHtml(category.name)}">${escapeHtml(category.name)}</span>
-          <div class="separated-mini-progress"><span style="width:${category.percent}%"></span></div>
-          <span class="separated-category-percent">${category.percent}%</span>
+  const preview = summary.categories.slice(0, 4);
+  const remaining = Math.max(0, summary.categories.length - preview.length);
+  const categories = preview.length
+    ? preview.map(category => `
+        <div class="sep-category-line" title="${escapeHtml(category.name)} · ${formatQty(category.separated)} de ${formatQty(category.required)}">
+          <span>${escapeHtml(category.name)}</span><strong>${category.label}</strong>
         </div>`).join('')
-    : '<p class="muted">Nenhuma categoria cadastrada.</p>';
+    : '<div class="sep-category-line"><span>Nenhuma categoria cadastrada</span><strong>—</strong></div>';
 
   return `
-    <article class="card separated-project-card" data-separated-project="${escapeHtml(projectId)}" tabindex="0" role="button" aria-label="Abrir materiais separados da obra ${escapeHtml(project.name || project.code || '')}">
-      <div class="project-card-head">
-        <div>
-          <span class="project-code">${escapeHtml(project.code || 'SEM CÓDIGO')}</span>
-          <h3>${escapeHtml(project.name || 'Obra sem nome')}</h3>
-          <p>${escapeHtml(project.client || project.address || 'Cliente não informado')}</p>
+    <article class="sep-project-card" data-separated-project="${escapeHtml(projectId)}" data-search="${escapeHtml(projectSearchText(projectId, project))}" tabindex="0" role="button" aria-label="Abrir materiais separados da obra ${escapeHtml(project.name || project.code || '')}">
+      <div class="sep-card-head">
+        <div class="sep-card-copy">
+          <span class="sep-project-code">${escapeHtml(project.code || 'SEM CÓDIGO')}</span>
+          <h3 title="${escapeHtml(project.name || 'Obra sem nome')}">${escapeHtml(project.name || 'Obra sem nome')}</h3>
+          <p title="${escapeHtml(project.client || project.address || 'Cliente não informado')}">${escapeHtml(project.client || project.address || 'Cliente não informado')}</p>
         </div>
-        <span class="status-pill status-${summary.percent >= 100 ? 'ok' : summary.separatedItems ? 'warning' : 'neutral'}">${summary.percent}% separado</span>
+        ${donut(summary)}
       </div>
-      <div class="progress"><span style="width:${summary.percent}%"></span></div>
-      <div class="progress-meta"><span>${formatQty(summary.separatedQty)} / ${formatQty(summary.requiredQty)}</span><span>${summary.separatedItems} de ${summary.totalItems} item(ns) iniciados</span></div>
-      <div class="separated-category-list">${categories}</div>
-      <div class="separated-card-footer">
-        <span class="muted">${summary.completedItems} item(ns) totalmente separados</span>
-        <span class="btn btn-ghost btn-sm">Abrir →</span>
+      <div class="sep-stats">
+        <div class="sep-stat"><strong>${summary.separatedItems}</strong><span>itens iniciados</span></div>
+        <div class="sep-stat"><strong>${summary.completedItems}</strong><span>concluídos</span></div>
+        <div class="sep-stat"><strong>${summary.totalItems}</strong><span>itens da obra</span></div>
+      </div>
+      <div class="sep-category-preview">${categories}</div>
+      ${remaining ? `<span class="sep-more">+ ${remaining} categoria${remaining === 1 ? '' : 's'}</span>` : ''}
+      <div class="sep-card-foot">
+        <span class="sep-qty-summary">${formatQty(summary.separatedQty)} de ${formatQty(summary.requiredQty)} separados</span>
+        <span class="sep-open">Ver detalhes ${arrowIcon()}</span>
       </div>
     </article>`;
 }
 
+function bindProjectSearch(view) {
+  const input = $('#separatedProjectSearch', view);
+  const count = $('#separatedProjectCount', view);
+  const cards = $$('[data-separated-project]', view);
+  const noResults = $('#separatedNoResults', view);
+
+  const apply = () => {
+    const query = normalize(input?.value || '');
+    let visible = 0;
+    cards.forEach(card => {
+      const matches = !query || card.dataset.search.includes(query);
+      card.hidden = !matches;
+      if (matches) visible += 1;
+    });
+    if (count) count.textContent = String(visible);
+    if (noResults) noResults.hidden = visible !== 0;
+  };
+
+  input?.addEventListener('input', apply);
+  apply();
+}
+
 function renderProjectList(view) {
   const projectEntries = Object.entries(projects)
-    .sort(([, a], [, b]) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
+    .sort(([, a], [, b]) => String(a.name || a.code || '').localeCompare(String(b.name || b.code || ''), 'pt-BR'));
 
   view.innerHTML = `
-    <div class="page-head">
-      <div><h2>Separação por obra</h2><p>Cada card mostra o avanço total e o percentual separado em cada categoria.</p></div>
-    </div>
-    ${projectEntries.length
-      ? `<section class="grid separated-project-grid">${projectEntries.map(([id, project]) => projectCard(id, project)).join('')}</section>`
-      : emptyState('▣', 'Nenhuma obra cadastrada', 'Cadastre uma obra e seus materiais para acompanhar a separação.')}`;
+    <div class="sep-shell">
+      <div class="page-head">
+        <div><h2>Separados por obra</h2><p>Acompanhe o avanço, localize uma obra e abra somente os materiais que já tiveram separação.</p></div>
+      </div>
+      <div class="sep-toolbar">
+        <label class="sep-search" aria-label="Buscar obra">
+          ${searchIcon()}
+          <input id="separatedProjectSearch" type="search" autocomplete="off" placeholder="Buscar por código, obra, cliente ou categoria" />
+        </label>
+        <div class="sep-toolbar-count"><strong id="separatedProjectCount">${projectEntries.length}</strong><span>obra${projectEntries.length === 1 ? '' : 's'}</span></div>
+      </div>
+      ${projectEntries.length
+        ? `<section class="sep-project-grid">${projectEntries.map(([id, project]) => projectCard(id, project)).join('')}${emptyState('⌕', 'Nenhuma obra encontrada', 'Tente outro código, nome, cliente ou categoria.', 'sep-no-results')}</section>`
+        : emptyState('▣', 'Nenhuma obra cadastrada', 'Cadastre uma obra e seus materiais para acompanhar a separação.')}
+    </div>`;
+
+  const noResults = $('.sep-no-results', view);
+  if (noResults) {
+    noResults.id = 'separatedNoResults';
+    noResults.hidden = true;
+  }
 
   $$('[data-separated-project]', view).forEach(card => {
     const open = () => {
@@ -236,23 +405,60 @@ function renderProjectList(view) {
       }
     });
   });
+
+  bindProjectSearch(view);
+}
+
+function materialSearchText(material) {
+  return normalize([
+    material.code,
+    material.description,
+    material.type,
+    material.category,
+    material.color,
+    measureText(material),
+    material.unit
+  ].filter(Boolean).join(' '));
 }
 
 function materialRow(material) {
   const required = Math.max(0, number(material.qtyRequired));
   const separated = clamp(number(material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
   const delivered = clamp(number(material.siteDeliveredQty), 0, separated || Number.MAX_SAFE_INTEGER);
-  const percent = required ? clamp(Math.round((separated / required) * 100), 0, 100) : 0;
+  const percent = percentMeta(separated, required);
   const [statusLabel, statusTone] = statusForMaterial(material);
 
-  return `<tr>
-    <td><span class="cell-main">${escapeHtml(material.description || 'Sem descrição')}</span><span class="cell-sub">${escapeHtml([material.code, material.type].filter(Boolean).join(' · ') || 'Sem código')}</span></td>
+  return `<tr data-separated-material-row data-search="${escapeHtml(materialSearchText(material))}">
+    <td><span class="sep-material-main" title="${escapeHtml(material.description || 'Sem descrição')}">${escapeHtml(material.description || 'Sem descrição')}</span><span class="sep-material-sub">${escapeHtml([material.code, material.type].filter(Boolean).join(' · ') || 'Sem código')}</span></td>
     <td>${escapeHtml(material.category || 'Sem categoria')}</td>
-    <td><span class="cell-main">${escapeHtml(measureText(material))}</span>${material.color ? `<span class="cell-sub">${escapeHtml(material.color)}</span>` : ''}</td>
-    <td class="qty-cell"><strong>${formatQty(separated)} / ${formatQty(required)} ${escapeHtml(material.unit || 'un')}</strong><div class="qty-track"><span style="width:${percent}%"></span></div>${delivered > 0 ? `<span class="cell-sub">${formatQty(delivered)} enviado(s) à obra</span>` : ''}</td>
-    <td><span class="status-pill status-${statusTone}">${escapeHtml(statusLabel)}</span></td>
-    <td class="nowrap">${formatDate(material.separatedDate)}</td>
+    <td><span class="sep-material-main">${escapeHtml(measureText(material))}</span>${material.color ? `<span class="sep-material-sub">${escapeHtml(material.color)}</span>` : ''}</td>
+    <td class="sep-qty"><strong>${formatQty(separated)} / ${formatQty(required)} ${escapeHtml(material.unit || 'un')}</strong><div class="sep-row-track"><i style="width:${percent.visual}%"></i></div></td>
+    <td>${delivered > 0 ? `${formatQty(delivered)} ${escapeHtml(material.unit || 'un')}` : '—'}</td>
+    <td><span class="sep-status sep-status-${statusTone}">${escapeHtml(statusLabel)}</span></td>
+    <td>${formatDate(material.separatedDate)}</td>
   </tr>`;
+}
+
+function bindMaterialSearch(view) {
+  const input = $('#separatedMaterialSearch', view);
+  const count = $('#separatedMaterialCount', view);
+  const rows = $$('[data-separated-material-row]', view);
+  const emptyRow = $('#separatedMaterialEmptyRow', view);
+
+  const apply = () => {
+    const query = normalize(input?.value || '');
+    let visible = 0;
+    rows.forEach(row => {
+      const matches = !query || row.dataset.search.includes(query);
+      row.hidden = !matches;
+      if (matches) visible += 1;
+    });
+    if (count) count.textContent = `${visible} item${visible === 1 ? '' : 's'}`;
+    if (emptyRow) emptyRow.hidden = visible !== 0;
+  };
+
+  input?.addEventListener('input', apply);
+  apply();
 }
 
 function renderProjectDetail(view, projectId) {
@@ -271,31 +477,60 @@ function renderProjectDetail(view, projectId) {
       return category || String(a.description || '').localeCompare(String(b.description || ''), 'pt-BR');
     });
   const summary = separationSummary(allItems);
-  const categoryCards = summary.categories.map(category => `
-    <article class="card separated-category-card">
-      <span class="muted">${escapeHtml(category.name)}</span>
-      <strong>${category.percent}%</strong>
-      <div class="progress"><span style="width:${category.percent}%"></span></div>
-      <span class="cell-sub">${formatQty(category.separated)} / ${formatQty(category.required)} separados</span>
+  const categoryStrip = summary.categories.map(category => `
+    <article class="sep-category-pill" title="${escapeHtml(category.name)}">
+      <div class="sep-category-pill-head"><span>${escapeHtml(category.name)}</span><strong>${category.label}</strong></div>
+      <div class="sep-mini-track"><i style="width:${category.visual}%"></i></div>
+      <small>${formatQty(category.separated)} de ${formatQty(category.required)} separados</small>
     </article>`).join('');
 
   view.innerHTML = `
-    <div class="page-head">
-      <div><button id="backSeparatedProjects" class="btn btn-ghost btn-sm" type="button">← Voltar para as obras</button><h2 style="margin-top:12px">${escapeHtml(project.name || 'Obra sem nome')}</h2><p>${escapeHtml(project.code || 'Sem código')} · ${summary.percent}% do material separado</p></div>
-    </div>
-    <section class="detail-hero">
-      <div><span class="project-code">OBRA ${escapeHtml(project.code || '')}</span><h2>${escapeHtml(project.name || '')}</h2><p>${summary.separatedItems} item(ns) com separação registrada · ${summary.completedItems} concluído(s)</p></div>
-      <div class="detail-score" style="--pct:${summary.percent}%"><span>${summary.percent}%</span></div>
-    </section>
-    ${categoryCards ? `<section class="grid separated-detail-categories">${categoryCards}</section>` : ''}
-    ${separatedItems.length
-      ? `<div class="table-wrap"><table class="data-table separated-table"><thead><tr><th>Material</th><th>Categoria</th><th>Medida / cor</th><th>Quantidade separada</th><th>Situação</th><th>Data</th></tr></thead><tbody>${separatedItems.map(materialRow).join('')}</tbody></table></div>`
-      : emptyState('✓', 'Nenhum item separado nesta obra', 'Assim que uma separação parcial ou total for registrada, o item aparecerá aqui.')}`;
+    <div class="sep-shell">
+      <div class="page-head">
+        <div><button id="backSeparatedProjects" class="btn btn-ghost btn-sm sep-back" type="button">← Voltar para as obras</button></div>
+      </div>
+      <section class="sep-detail-top">
+        <div>
+          <span class="sep-project-code">${escapeHtml(project.code || 'SEM CÓDIGO')}</span>
+          <h2>${escapeHtml(project.name || 'Obra sem nome')}</h2>
+          <p>${escapeHtml(project.client || project.address || 'Cliente não informado')}</p>
+        </div>
+        ${donut(summary, 108)}
+      </section>
+      <section class="sep-detail-summary">
+        <article class="sep-detail-metric"><span>Quantidade separada</span><strong>${formatQty(summary.separatedQty)}</strong></article>
+        <article class="sep-detail-metric"><span>Quantidade necessária</span><strong>${formatQty(summary.requiredQty)}</strong></article>
+        <article class="sep-detail-metric"><span>Itens com separação</span><strong>${summary.separatedItems}</strong></article>
+        <article class="sep-detail-metric"><span>Itens concluídos</span><strong>${summary.completedItems}</strong></article>
+      </section>
+      ${categoryStrip ? `<section class="sep-category-strip" aria-label="Progresso por categoria">${categoryStrip}</section>` : ''}
+      ${separatedItems.length ? `
+        <section class="sep-table-card">
+          <div class="sep-table-toolbar">
+            <label class="sep-search" aria-label="Buscar material separado">
+              ${searchIcon()}
+              <input id="separatedMaterialSearch" type="search" autocomplete="off" placeholder="Buscar código, descrição, categoria, medida ou cor" />
+            </label>
+            <span id="separatedMaterialCount" class="sep-table-count">${separatedItems.length} item${separatedItems.length === 1 ? '' : 's'}</span>
+          </div>
+          <div class="sep-table-wrap">
+            <table class="sep-table">
+              <thead><tr><th>Material</th><th>Categoria</th><th>Medida / cor</th><th>Separado</th><th>Enviado</th><th>Situação</th><th>Data</th></tr></thead>
+              <tbody>${separatedItems.map(materialRow).join('')}<tr id="separatedMaterialEmptyRow" hidden><td colspan="7">Nenhum material corresponde à busca.</td></tr></tbody>
+            </table>
+          </div>
+        </section>` : emptyState('✓', 'Nenhum item separado nesta obra', 'Assim que uma separação parcial ou total for registrada, o item aparecerá aqui.')}
+    </div>`;
 
   $('#backSeparatedProjects', view)?.addEventListener('click', () => {
     selectedProjectId = '';
     render();
   });
+  if (separatedItems.length) bindMaterialSearch(view);
+}
+
+function renderLoading(view) {
+  view.innerHTML = '<div class="card"><div class="empty"><div><div class="empty-icon">◌</div><h3>Carregando separados</h3><p>Organizando as obras e materiais...</p></div></div></div>';
 }
 
 function render() {
@@ -306,8 +541,13 @@ function render() {
 
   const title = $('#pageTitle');
   const subtitle = $('#pageSubtitle');
-  if (title) title.textContent = 'Materiais separados';
-  if (subtitle) subtitle.textContent = 'Acompanhamento da separação por obra e categoria';
+  if (title) title.textContent = 'Separados';
+  if (subtitle) subtitle.textContent = 'Materiais separados organizados por obra';
+
+  if (!projectsReady || !materialsReady) {
+    renderLoading(view);
+    return;
+  }
 
   if (selectedProjectId) renderProjectDetail(view, selectedProjectId);
   else renderProjectList(view);
@@ -316,16 +556,29 @@ function render() {
 function start() {
   if (started) return;
   started = true;
+  projectsReady = false;
+  materialsReady = false;
+
   stopProjects = onValue(ref(db, 'projects'), snapshot => {
     projects = snapshot.val() || {};
+    projectsReady = true;
     if (selectedProjectId && !projects[selectedProjectId]) selectedProjectId = '';
     render();
-  }, error => console.error('Falha ao carregar obras para a separação:', error));
+  }, error => {
+    projectsReady = true;
+    console.error('Falha ao carregar obras para a separação:', error);
+    render();
+  });
 
   stopMaterials = onValue(ref(db, 'materials'), snapshot => {
     materialsByProject = snapshot.val() || {};
+    materialsReady = true;
     render();
-  }, error => console.error('Falha ao carregar materiais separados:', error));
+  }, error => {
+    materialsReady = true;
+    console.error('Falha ao carregar materiais separados:', error);
+    render();
+  });
 }
 
 window.ObraFlowSeparatedProjects = {
@@ -339,9 +592,10 @@ window.ObraFlowSeparatedProjects = {
 document.addEventListener('click', event => {
   if (event.target.closest?.('[data-route="estoque"]')) {
     selectedProjectId = '';
-    setTimeout(render, 80);
+    setTimeout(render, 70);
   }
 });
+
 window.addEventListener('hashchange', () => {
   if (currentRoute() === 'estoque') render();
 });
@@ -354,6 +608,8 @@ onAuthStateChanged(auth, user => {
     stopProjects = null;
     stopMaterials = null;
     started = false;
+    projectsReady = false;
+    materialsReady = false;
     projects = {};
     materialsByProject = {};
     selectedProjectId = '';
