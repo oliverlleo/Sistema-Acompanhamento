@@ -1,4 +1,4 @@
-name: Apply direct painting delivery
+name: Apply direct painting delivery core
 
 on:
   workflow_dispatch:
@@ -14,27 +14,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Apply direct delivery flow
+      - name: Patch core painting flow
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          VERSION = '20260803-1110'
-
-          def replace_once(text, old, new, label):
+          def apply(text, old, new, label):
+              if new in text:
+                  return text
               if old not in text:
                   raise SystemExit(f'Pattern not found: {label}')
               return text.replace(old, new, 1)
 
-          app_path = Path('public/app.js')
-          app = app_path.read_text(encoding='utf-8')
+          path = Path('public/app.js')
+          text = path.read_text(encoding='utf-8')
 
-          app = replace_once(app,
-            "  pintura_atrasada: { label: 'Pintura atrasada', tone: 'danger', stage: 60 },\n  pronto_separar:",
-            "  pintura_atrasada: { label: 'Pintura atrasada', tone: 'danger', stage: 60 },\n  pintura_retorno_parcial: { label: 'Retorno parcial da pintura', tone: 'warning', stage: 68 },\n  pronto_separar:",
-            'status retorno parcial')
+          text = apply(text,
+            "  pintura_atrasada: { label: 'Pintura atrasada', tone: 'danger', stage: 60 },\n  pronto_separar: { label: 'Pronto para separar', tone: 'success', stage: 74 },",
+            "  pintura_atrasada: { label: 'Pintura atrasada', tone: 'danger', stage: 60 },\n  pintura_retorno_parcial: { label: 'Retorno parcial da pintura', tone: 'warning', stage: 68 },\n  pronto_separar: { label: 'Pronto para separar', tone: 'success', stage: 74 },",
+            'status')
 
-          old_helpers = """function materialPurchaseCommitted(material) {
+          old = """function materialPurchaseCommitted(material) {
   const { purchaseQty } = materialAllocation(material);
   if (purchaseQty <= 0) return true;
   if (material.purchaseDate || material.orderNumber || num(material.qtyReceived) > 0) return true;
@@ -53,7 +53,7 @@ function materialAvailableQty(material) {
 
 function materialSeparableQty(material) {
 """
-          new_helpers = """function materialPurchaseDeliveryToPainting(material) {
+          new = """function materialPurchaseDeliveryToPainting(material) {
   const { purchaseQty } = materialAllocation(material);
   return Boolean(material.paintingRequired && purchaseQty > 0 && material.purchaseDeliveryDestination === 'pintura');
 }
@@ -91,203 +91,72 @@ function materialPaintingSentQty(material) {
 
 function materialSeparableQty(material) {
 """
-          app = replace_once(app, old_helpers, new_helpers, 'purchase and painting helpers')
-          app = replace_once(app,
-            "  const paintSent = num(material.paintingSentQty);",
-            "  const paintSent = materialPaintingSentQty(material);",
-            'derived effective painting sent')
-          app = replace_once(app,
-            "    if (paintReturned > 0) return 'pronto_separar';",
-            "    if (paintReturned > 0) return 'pintura_retorno_parcial';",
-            'partial painting return status')
-          app = replace_once(app,
-            "'em_pintura', 'pintura_atrasada', 'pronto_separar'",
-            "'em_pintura', 'pintura_atrasada', 'pintura_retorno_parcial', 'pronto_separar'",
-            'progress partial status')
-          app = replace_once(app,
+          text = apply(text, old, new, 'helpers')
+          text = apply(text, "  const paintSent = num(material.paintingSentQty);", "  const paintSent = materialPaintingSentQty(material);", 'derive sent')
+          text = apply(text, "    if (paintReturned > 0) return 'pronto_separar';", "    if (paintReturned > 0) return 'pintura_retorno_parcial';", 'partial return')
+          text = apply(text,
+            "if (['enviado_obra', 'enviado_parcial', 'separado', 'separado_parcial', 'em_pintura', 'pintura_atrasada', 'pronto_separar'].includes(status))",
+            "if (['enviado_obra', 'enviado_parcial', 'separado', 'separado_parcial', 'em_pintura', 'pintura_atrasada', 'pintura_retorno_parcial', 'pronto_separar'].includes(status))",
+            'progress statuses')
+          text = apply(text,
             "    if (received >= purchaseQty) purchaseStage = statusMeta(material.paintingRequired ? 'aguarda_pintura' : 'pronto_separar').stage;",
             "    if (received >= purchaseQty) purchaseStage = material.paintingRequired\n      ? statusMeta(materialPurchaseDeliveryToPainting(material) ? 'em_pintura' : 'aguarda_pintura').stage\n      : statusMeta('pronto_separar').stage;",
-            'direct delivery progress')
-          app = replace_once(app,
+            'progress direct')
+          text = apply(text,
             "    pintura_atrasada: ['Registrar retorno', 'return-paint'],\n    pronto_separar:",
             "    pintura_atrasada: ['Registrar retorno', 'return-paint'],\n    pintura_retorno_parcial: ['Registrar retorno', 'return-paint'],\n    pronto_separar:",
-            'next action partial return')
-          app = replace_once(app,
+            'next action')
+          text = apply(text,
             "else if (materialAvailableQty(item) > 0 || num(item.paintingSentQty) > 0) summary.pintura += 1;",
             "else if (materialAvailableQty(item) > 0 || materialPaintingSentQty(item) > 0) summary.pintura += 1;",
-            'summary effective paint sent')
-
-          app = replace_once(app,
+            'summary')
+          text = apply(text,
             "  const delivered = num(material.siteDeliveredQty);\n\n  if (route === 'compras')",
             "  const delivered = num(material.siteDeliveredQty);\n  const paintSent = materialPaintingSentQty(material);\n\n  if (route === 'compras')",
-            'route paint sent variable')
-          app = replace_once(app,
+            'route sent')
+          text = apply(text,
             "&& (available > num(material.paintingReturnedQty) || num(material.paintingSentQty) > num(material.paintingReturnedQty));",
             "&& (available > num(material.paintingReturnedQty) || paintSent > num(material.paintingReturnedQty));",
-            'painting route effective quantity')
-          app = replace_once(app,
+            'route condition')
+          text = apply(text,
             "recebimento: ['Aguardando recebimento', 'Informe a quantidade que chegou e mantenha os atrasos visíveis.'],",
             "recebimento: ['Aguardando entrega', 'Confirme a chegada na empresa ou a entrega direta na pintura.'],",
-            'receiving route copy')
+            'route text')
 
-          app = replace_once(app,
+          text = apply(text,
             "  const paintSent = num(material.paintingSentQty);\n  const paintReturned = num(material.paintingReturnedQty);",
             "  const paintSent = materialPaintingSentQty(material);\n  const paintReturned = num(material.paintingReturnedQty);\n  const directToPainting = materialPurchaseDeliveryToPainting(material);",
-            'row effective painting sent')
-          app = replace_once(app,
+            'row quantities')
+          text = apply(text,
             "  else if (state.route === 'recebimento') [actionLabel, action] = ['Confirmar chegada', 'receive'];",
             "  else if (state.route === 'recebimento') [actionLabel, action] = directToPainting\n    ? ['Confirmar entrega na pintura', 'receive-paint-direct']\n    : ['Confirmar chegada', 'receive'];",
-            'receiving direct action')
-          app = replace_once(app,
+            'row direct action')
+          text = apply(text,
             "    quantityNote = 'Parcela de compra';\n  } else if (state.route === 'pintura')",
             "    quantityNote = directToPainting ? 'Parcela com entrega direta na pintura' : 'Parcela de compra';\n  } else if (state.route === 'pintura')",
-            'receiving direct quantity note')
-          app = replace_once(app,
+            'row note')
+          text = apply(text,
             "  const eta = ['em_pintura', 'pintura_atrasada'].includes(status) ? material.paintingEta : material.deliveryEta;",
             "  const eta = ['em_pintura', 'pintura_atrasada', 'pintura_retorno_parcial'].includes(status) ? material.paintingEta : material.deliveryEta;",
-            'partial return eta')
-          app = replace_once(app,
+            'eta')
+          text = apply(text,
             "  const allocationNote = allocation.source === 'misto'\n    ? `${fmtQty(allocation.stockQty)} estoque + ${fmtQty(allocation.purchaseQty)} compra`\n    : '';",
             "  const allocationNote = allocation.source === 'misto'\n    ? `${fmtQty(allocation.stockQty)} estoque + ${fmtQty(allocation.purchaseQty)} compra`\n    : '';\n  const deliveryNote = directToPainting ? 'fornecedor entrega direto na pintura' : '';",
-            'direct delivery row note')
-          app = replace_once(app,
+            'delivery note')
+          text = apply(text,
             "${allocationNote ? `<span class=\"cell-sub\">${escapeHtml(allocationNote)}</span>` : ''}${material.paintingRequired ? '<span class=\"cell-sub\">com pintura</span>' : ''}</td>",
             "${allocationNote ? `<span class=\"cell-sub\">${escapeHtml(allocationNote)}</span>` : ''}${material.paintingRequired ? '<span class=\"cell-sub\">com pintura</span>' : ''}${deliveryNote ? `<span class=\"cell-sub\">${escapeHtml(deliveryNote)}</span>` : ''}</td>",
-            'render direct delivery row note')
+            'render note')
 
-          app = replace_once(app,
-            "      <div id=\"paintingFields\" class=\"form-grid cols-3 full\" ${paintingRequired ? '' : 'hidden'}>\n        <label class=\"field\"><span>Empresa de pintura</span>",
-            "      <div id=\"paintingFields\" class=\"form-grid cols-3 full\" ${paintingRequired ? '' : 'hidden'}>\n        <label class=\"field source-paint-purchase\"><span>Destino da compra</span><select name=\"purchaseDeliveryDestination\"><option value=\"empresa\" ${material.purchaseDeliveryDestination !== 'pintura' ? 'selected' : ''}>Receber na empresa</option><option value=\"pintura\" ${material.purchaseDeliveryDestination === 'pintura' ? 'selected' : ''}>Fornecedor entrega direto na pintura</option></select></label>\n        <label class=\"field source-direct-paint\"><span>Quantidade entregue direto na pintura</span><input name=\"directPaintingDeliveredQty\" type=\"number\" step=\"0.001\" min=\"0\" value=\"${escapeHtml(material.directPaintingDeliveredQty ?? 0)}\" readonly /></label>\n        <label class=\"field source-direct-paint\"><span>Data da entrega direta</span><input name=\"directPaintingDeliveredDate\" type=\"date\" value=\"${escapeHtml(material.directPaintingDeliveredDate || '')}\" readonly /></label>\n        <label class=\"field\"><span>Empresa de pintura</span>",
-            'material direct delivery fields')
-
-          app = replace_once(app,
-            "    $$('.source-mixed', $('#materialForm')).forEach(el => el.hidden = !isMixed);\n\n    const requiredInput",
-            "    $$('.source-mixed', $('#materialForm')).forEach(el => el.hidden = !isMixed);\n    const paintingActive = $('#paintingRequired')?.checked;\n    const destination = $('[name=\"purchaseDeliveryDestination\"]', $('#materialForm'));\n    if (destination && (!paintingActive || !usesPurchase)) destination.value = 'empresa';\n    const directToPainting = Boolean(paintingActive && usesPurchase && destination?.value === 'pintura');\n    $$('.source-paint-purchase', $('#materialForm')).forEach(el => el.hidden = !(paintingActive && usesPurchase));\n    $$('.source-direct-paint', $('#materialForm')).forEach(el => el.hidden = !directToPainting);\n\n    const requiredInput",
-            'sync direct fields')
-          app = replace_once(app,
-            "  $('[name=\"stockRequiredQty\"]', $('#materialForm'))?.addEventListener('input', syncSourceFields);\n  syncSourceFields();\n  $('#paintingRequired').addEventListener('change', (e) => { $('#paintingFields').hidden = !e.target.checked; });",
-            "  $('[name=\"stockRequiredQty\"]', $('#materialForm'))?.addEventListener('input', syncSourceFields);\n  $('[name=\"purchaseDeliveryDestination\"]', $('#materialForm'))?.addEventListener('change', syncSourceFields);\n  syncSourceFields();\n  $('#paintingRequired').addEventListener('change', (e) => { $('#paintingFields').hidden = !e.target.checked; syncSourceFields(); });",
-            'bind direct field visibility')
-          app = replace_once(app,
-            "'paintingSentQty', 'paintingReturnedQty', 'separatedQty', 'siteDeliveredQty'];",
-            "'directPaintingDeliveredQty', 'paintingSentQty', 'paintingReturnedQty', 'separatedQty', 'siteDeliveredQty'];",
-            'manual direct numeric field')
-          app = replace_once(app,
-            "    const previousAllocation = materialAllocation(material);",
-            "    entries.purchaseDeliveryDestination = entries.paintingRequired && entries.purchaseRequiredQty > 0 && entries.purchaseDeliveryDestination === 'pintura' ? 'pintura' : 'empresa';\n    if (entries.purchaseDeliveryDestination !== 'pintura' && num(material.directPaintingDeliveredQty) <= 0) {\n      entries.directPaintingDeliveredQty = 0;\n      entries.directPaintingDeliveredDate = '';\n    }\n    const previousAllocation = materialAllocation(material);",
-            'normalize direct destination')
-          app = replace_once(app,
-            "    const hasOperationalMovement = Boolean(\n      material.purchaseDate || material.orderNumber || num(material.qtyReceived) > 0",
-            "    const deliveryRouteChanged = materialPurchaseDeliveryToPainting(material) !== materialPurchaseDeliveryToPainting({ ...material, ...entries })\n      || Boolean(material.paintingRequired) !== Boolean(entries.paintingRequired);\n    const hasOperationalMovement = Boolean(\n      material.purchaseDate || material.orderNumber || num(material.qtyReceived) > 0 || num(material.directPaintingDeliveredQty) > 0",
-            'direct route movement guard')
-          app = replace_once(app,
-            "    if (materialId && allocationChanged && hasOperationalMovement) {",
-            "    if (materialId && (allocationChanged || deliveryRouteChanged) && hasOperationalMovement) {",
-            'guard direct route changes')
-
-          app = replace_once(app,
-            "  const availableNow = materialAvailableQty(material);\n  const separableNow = materialSeparableQty(material);",
-            "  const availableNow = materialAvailableQty(material);\n  const directDeliveredNow = materialDirectPaintingDeliveredQty(material);\n  const paintSentNow = materialPaintingSentQty(material);\n  const internalPaintCapacity = Math.max(0, availableNow - directDeliveredNow);\n  const separableNow = materialSeparableQty(material);",
-            'quick action direct quantities')
-          app = replace_once(app,
-            "        <label class=\"field\"><span>Previsão de chegada</span><input name=\"deliveryEta\" type=\"date\" value=\"${escapeHtml(material.deliveryEta || '')}\" required /></label>`,\n      message: 'Compra registrada'",
-            "        <label class=\"field\"><span>Previsão de chegada</span><input name=\"deliveryEta\" type=\"date\" value=\"${escapeHtml(material.deliveryEta || '')}\" required /></label>\n        ${material.paintingRequired ? `<label class=\"field full\"><span>Destino da entrega</span><select name=\"purchaseDeliveryDestination\"><option value=\"empresa\" ${material.purchaseDeliveryDestination !== 'pintura' ? 'selected' : ''}>Receber na empresa e depois enviar para pintura</option><option value=\"pintura\" ${material.purchaseDeliveryDestination === 'pintura' ? 'selected' : ''}>Fornecedor entrega diretamente na pintura</option></select></label>` : ''}`,\n      message: 'Compra registrada'",
-            'purchase destination field')
-          app = replace_once(app,
-            "    'send-paint': {\n      title: 'Enviar para pintura'",
-            "    'receive-paint-direct': {\n      title: 'Confirmar entrega direta na pintura', subtitle: `${material.description} · parcela comprada ${fmtQty(required)} ${material.unit || 'un'}`,\n      fields: `\n        <label class=\"field\"><span>Quantidade total entregue na pintura</span><input name=\"directPaintingDeliveredQty\" type=\"number\" step=\"0.001\" min=\"0\" value=\"${escapeHtml(Math.max(directDeliveredNow, required))}\" required /></label>\n        <label class=\"field\"><span>Data da entrega na pintura</span><input name=\"directPaintingDeliveredDate\" type=\"date\" value=\"${escapeHtml(material.directPaintingDeliveredDate || todayISO())}\" required /></label>\n        <label class=\"field\"><span>Empresa de pintura</span><input name=\"paintingSupplier\" value=\"${escapeHtml(material.paintingSupplier || '')}\" required /></label>\n        <label class=\"field\"><span>Previsão de retorno</span><input name=\"paintingEta\" type=\"date\" value=\"${escapeHtml(material.paintingEta || '')}\" required /></label>\n        <label class=\"field full\"><span>Observações da entrega</span><textarea name=\"directPaintingNotes\">${escapeHtml(material.directPaintingNotes || '')}</textarea></label>`,\n      message: 'Entrega direta na pintura registrada'\n    },\n    'send-paint': {\n      title: 'Enviar para pintura'",
-            'direct receiving action config')
-          app = replace_once(app,
-            "<label class=\"field\"><span>Quantidade enviada</span><input name=\"paintingSentQty\" type=\"number\" step=\"0.001\" min=\"0\" value=\"${escapeHtml(Math.max(num(material.paintingSentQty), availableNow))}\" required /></label>",
-            "<label class=\"field\"><span>Quantidade total enviada pela empresa</span><input name=\"paintingSentQty\" type=\"number\" step=\"0.001\" min=\"0\" value=\"${escapeHtml(Math.max(num(material.paintingSentQty), internalPaintCapacity))}\" required /></label>",
-            'internal painting send quantity')
-          app = replace_once(app,
-            "value=\"${escapeHtml(Math.max(num(material.paintingReturnedQty), num(material.paintingSentQty)))}\"",
-            "value=\"${escapeHtml(Math.max(num(material.paintingReturnedQty), paintSentNow))}\"",
-            'return effective paint quantity')
-          app = replace_once(app,
-            "['stockReservedQty', 'qtyReceived', 'paintingSentQty'",
-            "['stockReservedQty', 'qtyReceived', 'directPaintingDeliveredQty', 'paintingSentQty'",
-            'quick direct numeric field')
-          app = replace_once(app,
-            "      qtyReceived: allocation.purchaseQty,\n      paintingSentQty: availableNow,\n      paintingReturnedQty: num(material.paintingSentQty),",
-            "      qtyReceived: allocation.purchaseQty,\n      directPaintingDeliveredQty: allocation.purchaseQty,\n      paintingSentQty: internalPaintCapacity,\n      paintingReturnedQty: paintSentNow,",
-            'direct action limits')
-          app = replace_once(app,
-            "      qtyReceived: 'quantidade da parcela comprada',\n      paintingSentQty: 'quantidade disponível',",
-            "      qtyReceived: 'quantidade da parcela comprada',\n      directPaintingDeliveredQty: 'quantidade da parcela comprada',\n      paintingSentQty: 'quantidade disponível para envio pela empresa',",
-            'direct action labels')
-          app = replace_once(app,
-            "      qtyReceived: num(material.qtyReceived),\n      paintingSentQty:",
-            "      qtyReceived: num(material.qtyReceived),\n      directPaintingDeliveredQty: num(material.directPaintingDeliveredQty),\n      paintingSentQty:",
-            'direct action minimum')
-
-          app_path.write_text(app, encoding='utf-8')
-
-          bulk_path = Path('public/bulk-purchase.js')
-          bulk = bulk_path.read_text(encoding='utf-8')
-          bulk = bulk.replace("./material-flow.js?v=20260803-0959", f"./material-flow.js?v={VERSION}")
-          bulk = replace_once(bulk,
-            "            <label class=\"field\"><span>Previsão de chegada *</span><input name=\"deliveryEta\" type=\"date\" required /></label>\n            <div class=\"import-note full\">",
-            "            <label class=\"field\"><span>Previsão de chegada *</span><input name=\"deliveryEta\" type=\"date\" required /></label>\n            <label class=\"field full\"><span>Destino dos itens que vão para pintura</span><select name=\"paintingDeliveryDestination\"><option value=\"empresa\">Receber na empresa e depois enviar</option><option value=\"pintura\">Fornecedor entrega diretamente na pintura</option></select></label>\n            <div class=\"import-note full\">A escolha de destino só será aplicada aos itens marcados para pintura. Itens sem pintura continuam com entrega normal.</div>\n            <div class=\"import-note full\">",
-            'bulk direct destination field')
-          bulk = replace_once(bulk,
-            "        const merged = { ...material, ...data, updatedAt: Date.now(), updatedBy: user.uid };",
-            "        const purchaseDeliveryDestination = material.paintingRequired && data.paintingDeliveryDestination === 'pintura' ? 'pintura' : 'empresa';\n        const merged = { ...material, ...data, purchaseDeliveryDestination, updatedAt: Date.now(), updatedBy: user.uid };",
-            'bulk direct destination value')
-          bulk = replace_once(bulk,
-            "        updates[`${basePath}/deliveryEta`] = data.deliveryEta;",
-            "        updates[`${basePath}/deliveryEta`] = data.deliveryEta;\n        updates[`${basePath}/purchaseDeliveryDestination`] = purchaseDeliveryDestination;",
-            'bulk save direct destination')
-          bulk_path.write_text(bulk, encoding='utf-8')
-
-          source_path = Path('public/bulk-source-choice-v2.js')
-          source = source_path.read_text(encoding='utf-8')
-          source = source.replace("./material-flow.js?v=20260803-0959", f"./material-flow.js?v={VERSION}")
-          source = source.replace("number(material.qtyReceived) > 0\n    || number(material.paintingSentQty)", "number(material.qtyReceived) > 0 || number(material.directPaintingDeliveredQty) > 0\n    || number(material.paintingSentQty)")
-          source = replace_once(source,
-            "    qtyReceived: clamp(number(material.qtyReceived), 0, purchaseQty),\n    updatedAt:",
-            "    qtyReceived: clamp(number(material.qtyReceived), 0, purchaseQty),\n    purchaseDeliveryDestination: material.paintingRequired && purchaseQty > 0 ? (material.purchaseDeliveryDestination || 'empresa') : 'empresa',\n    directPaintingDeliveredQty: purchaseQty > 0 ? clamp(number(material.directPaintingDeliveredQty), 0, purchaseQty) : 0,\n    updatedAt:",
-            'source preserve direct fields')
-          source = replace_once(source,
-            "      qtyReceived: 0\n    });",
-            "      qtyReceived: 0,\n      purchaseDeliveryDestination: 'empresa',\n      directPaintingDeliveredQty: 0,\n      directPaintingDeliveredDate: '',\n      directPaintingNotes: ''\n    });",
-            'source reset direct fields')
-          source_path.write_text(source, encoding='utf-8')
-
-          commitment_path = Path('public/commitment-summary.js')
-          commitment = commitment_path.read_text(encoding='utf-8').replace("./material-flow.js?v=20260803-0959", f"./material-flow.js?v={VERSION}")
-          commitment_path.write_text(commitment, encoding='utf-8')
-
-          route_path = Path('public/route-features.js')
-          route = route_path.read_text(encoding='utf-8')
-          route = route.replace('commitment-summary.js?v=20260803-0959', f'commitment-summary.js?v={VERSION}')
-          route = route.replace('bulk-purchase.js?v=20260803-0932', f'bulk-purchase.js?v={VERSION}')
-          route_path.write_text(route, encoding='utf-8')
-
-          index_path = Path('public/index.html')
-          index = index_path.read_text(encoding='utf-8')
-          index = index.replace('app.js?v=20260803-0959', f'app.js?v={VERSION}')
-          index = index.replace('bulk-source-choice-v2.js?v=20260803-0959', f'bulk-source-choice-v2.js?v={VERSION}')
-          index = index.replace('route-features.js?v=20260803-1025', f'route-features.js?v={VERSION}')
-          index_path.write_text(index, encoding='utf-8')
+          path.write_text(text, encoding='utf-8')
           PY
-      - name: Verify JavaScript syntax
+      - name: Verify syntax
+        run: node --check public/app.js
+      - name: Commit
         run: |
-          node --check public/app.js
-          node --check public/material-flow.js
-          node --check public/bulk-purchase.js
-          node --check public/bulk-source-choice-v2.js
-          node --check public/commitment-summary.js
-          node --check public/route-features.js
-      - name: Commit changes
-        run: |
-          if git diff --quiet; then
-            echo 'No changes to commit'
-            exit 0
-          fi
+          if git diff --quiet; then exit 0; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add public/app.js public/bulk-purchase.js public/bulk-source-choice-v2.js public/commitment-summary.js public/route-features.js public/index.html
-          git commit -m 'Support supplier delivery directly to painting'
+          git add public/app.js
+          git commit -m 'Add direct painting delivery to core screens'
           git push
