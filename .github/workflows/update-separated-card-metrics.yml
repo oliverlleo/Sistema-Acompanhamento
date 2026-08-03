@@ -68,24 +68,20 @@ jobs:
           route = Path('public/route-features.js')
           route_text = route.read_text(encoding='utf-8')
           old = "await import('./separated-projects.js?v=20260803-1430');"
-          new = "await import('./separated-projects.js?v=20260803-1442');"
-          if old not in route_text:
-              raise SystemExit('Pattern not found: separated module cache')
-          route.write_text(route_text.replace(old, new, 1), encoding='utf-8')
-
-          index = Path('public/index.html')
-          index_text = index.read_text(encoding='utf-8')
-          old_versions = ['20260803-1430', '20260803-1348']
-          changed = False
-          for version in old_versions:
-              needle = f'./route-features.js?v={version}'
-              if needle in index_text:
-                  index_text = index_text.replace(needle, './route-features.js?v=20260803-1442', 1)
-                  changed = True
-                  break
-          if not changed:
-              raise SystemExit('Pattern not found: route features cache')
-          index.write_text(index_text, encoding='utf-8')
+          new = "await import('./separated-projects.js?v=20260803-1446');"
+          if old in route_text:
+              route_text = route_text.replace(old, new, 1)
+          else:
+              import re
+              route_text, count = re.subn(
+                  r"await import\('\./separated-projects\.js\?v=[^']+'\);",
+                  new,
+                  route_text,
+                  count=1
+              )
+              if count != 1:
+                  raise SystemExit('Pattern not found: separated module cache')
+          route.write_text(route_text, encoding='utf-8')
           PY
 
           node --check public/separated-projects.js
@@ -95,6 +91,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add public/separated-projects.js public/route-features.js public/index.html
+          git add public/separated-projects.js public/route-features.js
           git commit -m "Show useful purchase and separation counts" || exit 0
           git push
