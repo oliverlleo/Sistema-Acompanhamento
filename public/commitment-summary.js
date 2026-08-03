@@ -1,72 +1,29 @@
 import { getApps, getApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
 import { getDatabase, ref, onValue, update } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
-
-const app = getApps().length ? getApp() : null;
-const auth = app ? getAuth(app) : null;
-const db = app ? getDatabase(app) : null;
+import { summaryForMaterials, number } from './material-flow.js?v=20260803-0932';
 
 let materialsByProject = {};
 let summariesByProject = {};
 let stopMaterials = null;
 let stopSummaries = null;
+let stopAuth = null;
 let reconciling = false;
 let reconcileAgain = false;
-
-const COMMITTED_STATUSES = new Set([
-  'aguardando_entrega', 'compra_atrasada', 'recebido_parcial',
-  'aguarda_pintura', 'em_pintura', 'pintura_atrasada',
-  'pronto_separar', 'separado_parcial', 'separado',
-  'enviado_parcial', 'enviado_obra'
-]);
-
-function number(value) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  let text = String(value ?? '').trim().replace(/\s/g, '');
-  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(text)) text = text.replace(/\./g, '').replace(',', '.');
-  else if (/^-?\d+(,\d+)$/.test(text)) text = text.replace(',', '.');
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function isCommitted(material = {}) {
-  if (material.source === 'estoque') return true;
-  if (material.source !== 'compra') return false;
-
-  if (material.purchaseDate || material.orderNumber) return true;
-  if (COMMITTED_STATUSES.has(material.status)) return true;
-
-  return [
-    material.qtyReceived,
-    material.paintingSentQty,
-    material.paintingReturnedQty,
-    material.separatedQty,
-    material.siteDeliveredQty
-  ].some(value => number(value) > 0);
-}
-
-function commitmentCounts(materials = {}) {
-  const list = Object.values(materials || {});
-  const committed = list.filter(isCommitted).length;
-  const total = list.length;
-  return {
-    total,
-    committed,
-    pending: Math.max(0, total - committed),
-    commitmentProgress: total ? Math.round((committed / total) * 100) : 0
-  };
-}
+let started = false;
 
 function relabelProjectCards() {
   requestAnimationFrame(() => {
-    document.querySelectorAll('.project-stat span').forEach(label => {
-      if (label.textContent.trim() === 'Pendentes') label.textContent = 'A empenhar';
+    document.querySelectorAll('.project-stat span, .progress-meta span, .kpi-top span, .kpi-foot').forEach(label => {
+      const text = label.textContent.trim();
+      if (text === 'Pendentes' || text === 'Itens pendentes') label.textContent = text === 'Pendentes' ? 'A empenhar' : 'Itens a empenhar';
+      if (text === 'Ainda não enviados para a obra') label.textContent = 'Sem origem definida ou compra registrada';
+      if (/^\d+\s+pendente\(s\)$/.test(text)) label.textContent = text.replace('pendente(s)', 'a empenhar');
     });
   });
 }
 
-async function reconcileSummaries() {
-  if (!db) return;
+async function reconcileSummaries(db) {
   if (reconciling) {
     reconcileAgain = true;
     return;
@@ -81,18 +38,14 @@ async function reconcileSummaries() {
     const changes = {};
 
     projectIds.forEach(projectId => {
-      const counts = commitmentCounts(materialsByProject[projectId]);
+      const calculated = summaryForMaterials(materialsByProject[projectId] || {});
       const current = summariesByProject[projectId] || {};
 
-      if (number(current.pending) !== counts.pending) {
-        changes[`projectSummaries/${projectId}/pending`] = counts.pending;
-      }
-      if (number(current.committed) !== counts.committed) {
-        changes[`projectSummaries/${projectId}/committed`] = counts.committed;
-      }
-      if (number(current.commitmentProgress) !== counts.commitmentProgress) {
-        changes[`projectSummaries/${projectId}/commitmentProgress`] = counts.commitmentProgress;
-      }
+      ['pending', 'committed', 'commitmentProgress'].forEach(field => {
+        if (number(current[field]) !== number(calculated[field])) {
+          changes[`projectSummaries/${projectId}/${field}`] = calculated[field];
+        }
+      });
     });
 
     if (Object.keys(changes).length) await update(ref(db), changes);
@@ -103,7 +56,7 @@ async function reconcileSummaries() {
     relabelProjectCards();
     if (reconcileAgain) {
       reconcileAgain = false;
-      queueMicrotask(reconcileSummaries);
+      queueMicrotask(() => reconcileSummaries(db));
     }
   }
 }
@@ -117,19 +70,30 @@ function stopListeners() {
   summariesByProject = {};
 }
 
-if (auth && db) {
-  onAuthStateChanged(auth, user => {
+function start(attempt = 0) {
+  if (started) return;
+  if (!getApps().length) {
+    if (attempt < 20) setTimeout(() => start(attempt + 1), 100);
+    return;
+  }
+
+  started = true;
+  const app = getApp();
+  const auth = getAuth(app);
+  const db = getDatabase(app);
+
+  stopAuth = onAuthStateChanged(auth, user => {
     stopListeners();
     if (!user) return;
 
     stopMaterials = onValue(ref(db, 'materials'), snapshot => {
       materialsByProject = snapshot.val() || {};
-      reconcileSummaries();
+      reconcileSummaries(db);
     }, error => console.error('Falha ao ler materiais para empenho:', error));
 
     stopSummaries = onValue(ref(db, 'projectSummaries'), snapshot => {
       summariesByProject = snapshot.val() || {};
-      reconcileSummaries();
+      reconcileSummaries(db);
       relabelProjectCards();
     }, error => console.error('Falha ao ler resumos das obras:', error));
   });
@@ -141,3 +105,10 @@ document.addEventListener('click', event => {
     setTimeout(relabelProjectCards, 300);
   }
 });
+
+window.addEventListener('beforeunload', () => {
+  stopListeners();
+  stopAuth?.();
+});
+
+start();
