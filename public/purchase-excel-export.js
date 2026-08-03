@@ -53,9 +53,20 @@ function firstUseful(...values) {
 }
 
 function formatNumber(value) {
-  const parsed = number(value);
-  if (!Number.isFinite(parsed)) return '';
-  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(parsed);
+  if (typeof value === 'number') {
+    return Number.isFinite(value)
+      ? new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(value)
+      : '';
+  }
+
+  let text = String(value ?? '').trim().replace(/\s/g, '');
+  if (!text) return '';
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(text)) text = text.replace(/\./g, '').replace(',', '.');
+  else if (/^-?\d+(,\d+)$/.test(text)) text = text.replace(',', '.');
+  const parsed = Number(text);
+  return Number.isFinite(parsed)
+    ? new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(parsed)
+    : '';
 }
 
 function measureText(material = {}) {
