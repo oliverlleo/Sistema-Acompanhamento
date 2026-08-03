@@ -1,4 +1,4 @@
-import { getApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
+import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
 import {
   allocation,
@@ -6,7 +6,18 @@ import {
   availableQty
 } from './material-flow.js?v=20260803-1648';
 
-const db = getDatabase(getApp());
+const firebaseConfig = {
+  apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
+  authDomain: 'sistemsquared.firebaseapp.com',
+  databaseURL: 'https://sistemsquared-default-rtdb.firebaseio.com',
+  projectId: 'sistemsquared',
+  storageBucket: 'sistemsquared.firebasestorage.app',
+  messagingSenderId: '43452051582',
+  appId: '1:43452051582:web:08a19296448eb66d0b282f'
+};
+
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+const db = getDatabase(app);
 
 let projectId = '';
 let materials = [];
