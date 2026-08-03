@@ -7,7 +7,7 @@ import {
   deriveStatus,
   number,
   summaryForMaterials
-} from './material-flow.js?v=20260803-0932';
+} from './material-flow.js?v=20260803-0959';
 
 const config = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',

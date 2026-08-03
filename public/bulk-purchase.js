@@ -6,7 +6,7 @@ import {
   deriveStatus,
   purchaseNeedsAction,
   summaryForMaterials
-} from './material-flow.js?v=20260803-0932';
+} from './material-flow.js?v=20260803-0959';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
