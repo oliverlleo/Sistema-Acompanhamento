@@ -79,7 +79,7 @@ const ROUTES = {
   recebimento: ['Recebimento', 'Confirmação das entregas e quantidades recebidas'],
   pintura: ['Pintura', 'Envio, prazo e retorno dos itens que exigem pintura'],
   separacao: ['Separação', 'Materiais disponíveis que precisam ser separados para a obra'],
-  estoque: ['Estoque', 'Saldo, localização e estoque mínimo dos materiais'],
+  estoque: ['Materiais separados', 'Acompanhamento da separação por obra e categoria'],
   importar: ['Importar arquivos', 'Suba planilhas e PDFs sem perder o formato de origem'],
   usuarios: ['Usuários', 'Perfis e permissões da equipe']
 };
@@ -334,7 +334,11 @@ function renderCurrent() {
     recebimento: () => renderMaterialQueue('recebimento'),
     pintura: () => renderMaterialQueue('pintura'),
     separacao: () => renderMaterialQueue('separacao'),
-    estoque: renderInventory,
+    estoque: () => {
+      const renderer = window.ObraFlowSeparatedProjects?.render;
+      if (renderer) renderer();
+      else $('#view').innerHTML = '<div class="card"><div class="empty"><div><div class="empty-icon">✓</div><h3>Carregando materiais separados</h3><p>Organizando as obras e categorias...</p></div></div></div>';
+    },
     importar: renderImporter,
     usuarios: renderUsers
   };
