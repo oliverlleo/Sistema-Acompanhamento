@@ -1,0 +1,40 @@
+name: Refresh mixed flow imports
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/refresh-mixed-flow-imports.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refresh nested module versions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          for name in ['public/commitment-summary.js', 'public/bulk-source-choice-v2.js', 'public/bulk-purchase.js']:
+              path = Path(name)
+              text = path.read_text(encoding='utf-8')
+              text = text.replace('material-flow.js?v=20260803-0932', 'material-flow.js?v=20260803-0959')
+              path.write_text(text, encoding='utf-8')
+          PY
+      - name: Verify syntax
+        run: |
+          node --check public/material-flow.js
+          node --check public/commitment-summary.js
+          node --check public/bulk-source-choice-v2.js
+          node --check public/bulk-purchase.js
+      - name: Commit imports
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/commitment-summary.js public/bulk-source-choice-v2.js public/bulk-purchase.js
+          git diff --cached --quiet && exit 0
+          git commit -m 'Refresh nested mixed-flow module imports'
+          git push
