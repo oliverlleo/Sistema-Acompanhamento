@@ -8,6 +8,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const loaded = {
   importar: false,
   compras: false,
+  excelCompras: false,
   medidas: false
 };
 
@@ -60,6 +61,17 @@ async function loadMeasuresFeature() {
   }
 }
 
+async function loadPurchaseExcelFeature() {
+  if (loaded.excelCompras) return;
+  loaded.excelCompras = true;
+  try {
+    await import('./purchase-excel-export.js?v=20260803-1331');
+  } catch (error) {
+    loaded.excelCompras = false;
+    console.error('Falha ao carregar exportação da lista de compra:', error);
+  }
+}
+
 async function loadRouteFeature() {
   const route = currentRoute();
 
@@ -81,13 +93,17 @@ async function loadRouteFeature() {
     await loadMeasuresFeature();
   }
 
-  if (route === 'compras' && !loaded.compras) {
-    loaded.compras = true;
-    try {
-      await import('./bulk-purchase.js?v=20260803-0932');
-    } catch (error) {
-      loaded.compras = false;
-      console.error('Falha ao carregar compra em lote:', error);
+  if (route === 'compras') {
+    await loadPurchaseExcelFeature();
+
+    if (!loaded.compras) {
+      loaded.compras = true;
+      try {
+        await import('./bulk-purchase.js?v=20260803-0932');
+      } catch (error) {
+        loaded.compras = false;
+        console.error('Falha ao carregar compra em lote:', error);
+      }
     }
   }
 }
