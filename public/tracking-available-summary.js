@@ -1,5 +1,11 @@
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
+import {
+  allocation,
+  clamp,
+  purchaseCommitted,
+  quantityNumber
+} from './material-flow.js?v=20260803-1648';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
@@ -25,93 +31,39 @@ function currentRoute() {
   return location.hash.replace(/^#/, '') || 'dashboard';
 }
 
-function normalizedUnit(material = {}) {
-  return String(material.unit || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim()
-    .toLowerCase();
-}
-
-function isDecimalMeasure(material = {}) {
-  const unit = normalizedUnit(material);
-  return ['m', 'm2', 'm²', 'metro', 'metros', 'kg'].includes(unit);
-}
-
-function parseQuantity(material, value) {
-  if (value === null || value === undefined || value === '') return 0;
-
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) return 0;
-    // Importações antigas gravaram, por exemplo, 435.554 m como 435554.
-    if (isDecimalMeasure(material) && Number.isInteger(value) && Math.abs(value) >= 1000) {
-      return value / 1000;
-    }
-    return value;
-  }
-
-  let text = String(value).trim().replace(/\s/g, '');
-  if (!text) return 0;
-
-  if (text.includes(',') && text.includes('.')) {
-    if (text.lastIndexOf(',') > text.lastIndexOf('.')) {
-      text = text.replace(/\./g, '').replace(',', '.');
-    } else {
-      text = text.replace(/,/g, '');
-    }
-  } else if (text.includes(',')) {
-    text = text.replace(',', '.');
-  }
-
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function formatQuantity(value) {
   return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(value || 0);
-}
-
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function allocation(material = {}) {
-  const required = Math.max(0, parseQuantity(material, material.qtyRequired));
-  const source = material.source || 'pendente';
-
-  if (source === 'estoque') {
-    return { required, stockQty: required, purchaseQty: 0 };
-  }
-  if (source === 'compra') {
-    return { required, stockQty: 0, purchaseQty: required };
-  }
-  if (source === 'misto') {
-    const stockQty = clamp(parseQuantity(material, material.stockRequiredQty), 0, required);
-    const hasPurchase = material.purchaseRequiredQty !== undefined
-      && material.purchaseRequiredQty !== null
-      && material.purchaseRequiredQty !== '';
-    const purchaseQty = clamp(
-      hasPurchase ? parseQuantity(material, material.purchaseRequiredQty) : required - stockQty,
-      0,
-      required - stockQty
-    );
-    return { required, stockQty, purchaseQty };
-  }
-  return { required, stockQty: 0, purchaseQty: 0 };
 }
 
 function quantitySummary() {
   let totalRequiredQty = 0;
   let availableQty = 0;
-  let stockAvailableQty = 0;
-  let receivedAvailableQty = 0;
+  let stockPendingItems = 0;
+  let purchasedItems = 0;
+  let receivedPurchaseItems = 0;
 
   materials.forEach(material => {
     const alloc = allocation(material);
-    const received = clamp(parseQuantity(material, material.qtyReceived), 0, alloc.purchaseQty);
-    const separated = clamp(parseQuantity(material, material.separatedQty), 0, alloc.required || Number.MAX_SAFE_INTEGER);
-    const sentToPainting = clamp(parseQuantity(material, material.paintingSentQty), 0, alloc.required || Number.MAX_SAFE_INTEGER);
-    const returnedFromPainting = clamp(parseQuantity(material, material.paintingReturnedQty), 0, sentToPainting || Number.MAX_SAFE_INTEGER);
+    const received = clamp(
+      quantityNumber(material, material.qtyReceived),
+      0,
+      alloc.purchaseQty
+    );
+    const separated = clamp(
+      quantityNumber(material, material.separatedQty),
+      0,
+      alloc.required || Number.MAX_SAFE_INTEGER
+    );
+    const sentToPainting = clamp(
+      quantityNumber(material, material.paintingSentQty),
+      0,
+      alloc.required || Number.MAX_SAFE_INTEGER
+    );
+    const returnedFromPainting = clamp(
+      quantityNumber(material, material.paintingReturnedQty),
+      0,
+      sentToPainting || Number.MAX_SAFE_INTEGER
+    );
     const awayAtPainting = Math.max(0, sentToPainting - returnedFromPainting);
     const alreadyUnavailable = separated + awayAtPainting;
 
@@ -120,32 +72,43 @@ function quantitySummary() {
     const purchaseRemaining = Math.max(0, received - usedBeyondStock);
 
     totalRequiredQty += alloc.required;
-    stockAvailableQty += stockRemaining;
-    receivedAvailableQty += purchaseRemaining;
     availableQty += stockRemaining + purchaseRemaining;
+
+    if (stockRemaining > 0) stockPendingItems += 1;
+
+    if (alloc.purchaseQty > 0 && purchaseCommitted(material)) {
+      purchasedItems += 1;
+      if (received > 0) receivedPurchaseItems += 1;
+    }
   });
 
   return {
     totalRequiredQty,
     availableQty,
-    stockAvailableQty,
-    receivedAvailableQty
+    stockPendingItems,
+    purchasedItems,
+    receivedPurchaseItems
   };
 }
 
 function metric(label, value, note = '') {
   const article = document.createElement('article');
   article.className = 'trk-metric';
+
   const labelElement = document.createElement('span');
   labelElement.textContent = label;
+
   const strong = document.createElement('strong');
   strong.textContent = value;
+
   article.append(labelElement, strong);
+
   if (note) {
     const small = document.createElement('small');
     small.textContent = note;
     article.appendChild(small);
   }
+
   return article;
 }
 
@@ -163,8 +126,9 @@ function patch() {
   const signature = [
     data.totalRequiredQty,
     data.availableQty,
-    data.stockAvailableQty,
-    data.receivedAvailableQty
+    data.stockPendingItems,
+    data.purchasedItems,
+    data.receivedPurchaseItems
   ].join('|');
 
   if (lastSignature === signature && summary.dataset.availableSummary === signature) return;
@@ -178,8 +142,16 @@ function patch() {
       `${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)} un`,
       'quantidade disponível na empresa'
     ),
-    metric('Do estoque e ainda não separado', `${formatQuantity(data.stockAvailableQty)} un`),
-    metric('Recebido da compra e ainda não separado', `${formatQuantity(data.receivedAvailableQty)} un`)
+    metric(
+      'Itens em estoque',
+      `${data.stockPendingItems} itens`,
+      'materiais com saldo de estoque ainda não separado'
+    ),
+    metric(
+      'Recebidos das compras',
+      `${data.receivedPurchaseItems} de ${data.purchasedItems} itens`,
+      'itens comprados com recebimento registrado'
+    )
   );
 }
 
@@ -194,13 +166,14 @@ async function loadProject(id) {
   const version = ++requestVersion;
   projectId = id;
   lastSignature = '';
+
   try {
     const snapshot = await get(ref(db, `materials/${id}`));
     if (version !== requestVersion || currentRoute() !== 'estoque') return;
     materials = Object.values(snapshot.val() || {});
     queuePatch();
   } catch (error) {
-    console.error('Falha ao calcular quantidades conferidas:', error);
+    console.error('Falha ao calcular materiais conferidos:', error);
   }
 }
 
@@ -217,7 +190,10 @@ document.addEventListener('keydown', event => {
   }
 }, true);
 
-new MutationObserver(queuePatch).observe(document.documentElement, { childList: true, subtree: true });
+new MutationObserver(queuePatch).observe(document.documentElement, {
+  childList: true,
+  subtree: true
+});
 
 window.addEventListener('hashchange', () => {
   if (currentRoute() !== 'estoque') {
