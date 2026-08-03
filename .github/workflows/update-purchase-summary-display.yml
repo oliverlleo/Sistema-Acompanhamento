@@ -1,4 +1,4 @@
-name: Update purchase summary display
+name: Update purchase and painting summaries
 
 on:
   push:
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Update purchase presentation
+      - name: Update tracking summary presentation
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -21,53 +21,92 @@ jobs:
           path = Path('public/acompanhamento-detail.js')
           text = path.read_text(encoding='utf-8')
 
-          old_css = ".trk-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}"
-          new_css = old_css + "\n    .trk-summary-purchase{grid-template-columns:repeat(3,minmax(0,1fr))}"
-          if old_css not in text:
-              raise SystemExit('Purchase summary CSS anchor not found')
-          text = text.replace(old_css, new_css, 1)
+          def replace_once(old, new, label):
+              global text
+              if old not in text:
+                  raise SystemExit(f'Pattern not found: {label}')
+              text = text.replace(old, new, 1)
 
-          old_summary = """  if (key === 'comprado') {
+          replace_once(
+              ".trk-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}",
+              ".trk-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}\n    .trk-summary-purchase{grid-template-columns:repeat(3,minmax(0,1fr))}",
+              'purchase summary grid'
+          )
+
+          replace_once(
+              "    paintingRequiredQty: 0,\n    inPaintingQty: 0,",
+              "    paintingRequiredQty: 0,\n    paintingRequiredItems: 0,\n    inPaintingQty: 0,",
+              'painting item counter'
+          )
+
+          replace_once(
+              "    if (material.paintingRequired) {\n      data.paintingRequiredQty += required;",
+              "    if (material.paintingRequired) {\n      data.paintingRequiredItems += 1;\n      data.paintingRequiredQty += required;",
+              'painting total items'
+          )
+
+          replace_once(
+              """  if (key === 'comprado') {
     return [
       metric('Itens que precisam de compra', String(data.purchaseItems)),
       metric('Itens comprados', String(data.purchasedItems)),
       metric('Itens que faltam comprar', String(data.missingPurchaseItems)),
       metric('Quantidade comprada', `${formatQty(data.purchasedQty)} / ${formatQty(data.purchaseRequired)}`, data.nearestDeliveryEta ? `Próximo prazo: ${formatDate(data.nearestDeliveryEta)}` : 'Sem prazo registrado')
     ].join('');
-  }"""
-          new_summary = """  if (key === 'comprado') {
+  }""",
+              """  if (key === 'comprado') {
     const missingPurchaseQty = Math.max(0, data.purchaseRequired - data.purchasedQty);
     return [
       metric('Itens comprados', `${data.purchasedItems} de ${data.purchaseItems}`),
       metric('Quantidade comprada', `${formatQty(data.purchasedQty)} un de ${formatQty(data.purchaseRequired)} un`, data.nearestDeliveryEta ? `Próximo prazo: ${formatDate(data.nearestDeliveryEta)}` : 'Sem prazo registrado'),
       metric('Falta comprar', `${data.missingPurchaseItems} itens — ${formatQty(missingPurchaseQty)} unidades`)
     ].join('');
-  }"""
-          if old_summary not in text:
-              raise SystemExit('Purchase summary block not found')
-          text = text.replace(old_summary, new_summary, 1)
+  }""",
+              'purchase summary'
+          )
 
-          old_render = '<section class="trk-summary">${summaryHtml(activeStage, data)}</section>'
-          new_render = '<section class="trk-summary ${activeStage === \'comprado\' ? \'trk-summary-purchase\' : \'\'}">${summaryHtml(activeStage, data)}</section>'
-          if old_render not in text:
-              raise SystemExit('Summary render anchor not found')
-          text = text.replace(old_render, new_render, 1)
+          replace_once(
+              """  if (key === 'pintura') {
+    return [
+      metric('Itens em pintura agora', String(data.paintingItems)),
+      metric('Quantidade em pintura', formatQty(data.inPaintingQty)),
+      metric('Quantidade já retornada', formatQty(data.paintingReturnedQty)),
+      metric('Próximo retorno', formatDate(data.nearestPaintingEta), data.nearestPaintingEta && isPast(data.nearestPaintingEta) ? 'Prazo vencido' : '')
+    ].join('');
+  }""",
+              """  if (key === 'pintura') {
+    return [
+      metric('Itens em pintura agora', `${data.paintingItems} de ${data.paintingRequiredItems}`),
+      metric('Quantidade em pintura', `${formatQty(data.inPaintingQty)} un de ${formatQty(data.paintingRequiredQty)} un`),
+      metric('Quantidade já retornada', `${formatQty(data.paintingReturnedQty)} un`),
+      metric('Próximo retorno', formatDate(data.nearestPaintingEta), data.nearestPaintingEta && isPast(data.nearestPaintingEta) ? 'Prazo vencido' : '')
+    ].join('');
+  }""",
+              'painting summary'
+          )
+
+          replace_once(
+              '<section class="trk-summary">${summaryHtml(activeStage, data)}</section>',
+              '<section class="trk-summary ${activeStage === \'comprado\' ? \'trk-summary-purchase\' : \'\'}">${summaryHtml(activeStage, data)}</section>',
+              'summary render'
+          )
+
           path.write_text(text, encoding='utf-8')
 
           route = Path('public/route-features.js')
           route_text = route.read_text(encoding='utf-8')
           old_route = "import './acompanhamento-detail.js?v=20260803-1512';"
-          new_route = "import './acompanhamento-detail.js?v=20260803-1520';"
+          new_route = "import './acompanhamento-detail.js?v=20260803-1524';"
           if old_route not in route_text:
-              raise SystemExit('Acompanhamento cache anchor not found')
+              raise SystemExit('Pattern not found: acompanhamento cache')
           route.write_text(route_text.replace(old_route, new_route, 1), encoding='utf-8')
 
           index = Path('public/index.html')
           index_text = index.read_text(encoding='utf-8')
           old_index = './route-features.js?v=20260803-1512'
-          new_index = './route-features.js?v=20260803-1520'
+          new_index = './route-features.js?v=20260803-1524'
           if old_index not in index_text:
-              raise SystemExit('Route cache anchor not found')
+              raise SystemExit('Pattern not found: route cache')
           index.write_text(index_text.replace(old_index, new_index, 1), encoding='utf-8')
           PY
 
@@ -79,5 +118,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public/acompanhamento-detail.js public/route-features.js public/index.html
-          git commit -m "Simplify purchase summary presentation" || exit 0
+          git commit -m "Clarify purchase and painting tracking summaries" || exit 0
           git push
