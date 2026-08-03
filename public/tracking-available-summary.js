@@ -43,6 +43,7 @@ function parseQuantity(material, value) {
 
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return 0;
+    // Importações antigas gravaram, por exemplo, 435.554 m como 435554.
     if (isDecimalMeasure(material) && Number.isInteger(value) && Math.abs(value) >= 1000) {
       return value / 1000;
     }
@@ -64,6 +65,10 @@ function parseQuantity(material, value) {
 
   const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatQuantity(value) {
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(value || 0);
 }
 
 function clamp(value, min, max) {
@@ -95,10 +100,11 @@ function allocation(material = {}) {
   return { required, stockQty: 0, purchaseQty: 0 };
 }
 
-function itemCounts() {
-  let checkedItems = 0;
-  let stockItems = 0;
-  let receivedPurchaseItems = 0;
+function quantitySummary() {
+  let totalRequiredQty = 0;
+  let availableQty = 0;
+  let stockAvailableQty = 0;
+  let receivedAvailableQty = 0;
 
   materials.forEach(material => {
     const alloc = allocation(material);
@@ -113,16 +119,17 @@ function itemCounts() {
     const usedBeyondStock = Math.max(0, alreadyUnavailable - alloc.stockQty);
     const purchaseRemaining = Math.max(0, received - usedBeyondStock);
 
-    if (stockRemaining > 0 || purchaseRemaining > 0) checkedItems += 1;
-    if (stockRemaining > 0) stockItems += 1;
-    if (purchaseRemaining > 0) receivedPurchaseItems += 1;
+    totalRequiredQty += alloc.required;
+    stockAvailableQty += stockRemaining;
+    receivedAvailableQty += purchaseRemaining;
+    availableQty += stockRemaining + purchaseRemaining;
   });
 
   return {
-    totalItems: materials.length,
-    checkedItems,
-    stockItems,
-    receivedPurchaseItems
+    totalRequiredQty,
+    availableQty,
+    stockAvailableQty,
+    receivedAvailableQty
   };
 }
 
@@ -152,12 +159,12 @@ function patch() {
   const summary = $('.trk-summary');
   if (!summary) return;
 
-  const data = itemCounts();
+  const data = quantitySummary();
   const signature = [
-    data.totalItems,
-    data.checkedItems,
-    data.stockItems,
-    data.receivedPurchaseItems
+    data.totalRequiredQty,
+    data.availableQty,
+    data.stockAvailableQty,
+    data.receivedAvailableQty
   ].join('|');
 
   if (lastSignature === signature && summary.dataset.availableSummary === signature) return;
@@ -166,9 +173,13 @@ function patch() {
   summary.dataset.availableSummary = signature;
   summary.style.gridTemplateColumns = 'repeat(3,minmax(0,1fr))';
   summary.replaceChildren(
-    metric('Itens conferidos e ainda não separados', `${data.checkedItems} de ${data.totalItems}`, 'itens da obra'),
-    metric('Vindos do estoque', `${data.stockItems} itens`),
-    metric('Recebidos da compra', `${data.receivedPurchaseItems} itens`)
+    metric(
+      'Quantidade conferida e ainda não separada',
+      `${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)} un`,
+      'quantidade disponível na empresa'
+    ),
+    metric('Do estoque e ainda não separado', `${formatQuantity(data.stockAvailableQty)} un`),
+    metric('Recebido da compra e ainda não separado', `${formatQuantity(data.receivedAvailableQty)} un`)
   );
 }
 
@@ -189,7 +200,7 @@ async function loadProject(id) {
     materials = Object.values(snapshot.val() || {});
     queuePatch();
   } catch (error) {
-    console.error('Falha ao contar materiais conferidos:', error);
+    console.error('Falha ao calcular quantidades conferidas:', error);
   }
 }
 
