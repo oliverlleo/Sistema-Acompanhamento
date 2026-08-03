@@ -807,6 +807,8 @@ function materialRow(material) {
     if (separated < separable) [actionLabel, action] = [separated > 0 ? 'Continuar separação' : 'Marcar separado', 'separate'];
     else if (separated > delivered) [actionLabel, action] = [delivered > 0 ? 'Continuar envio' : 'Enviar para obra', 'deliver'];
     else [actionLabel, action] = ['Ver material', 'view'];
+  } else if (state.route === 'materiais' && allocation.unallocatedQty > 0) {
+    [actionLabel, action] = ['Definir compra/estoque', 'edit'];
   } else if (state.route === 'materiais' && materialPurchaseNeedsAction(material)) {
     [actionLabel, action] = ['Registrar compra', 'purchase'];
   }
@@ -1040,7 +1042,7 @@ function openQuickActionModal(material, action) {
     receive: {
       title: 'Confirmar chegada', subtitle: `${material.description} · necessário ${fmtQty(required)} ${material.unit || 'un'}`,
       fields: `
-        <label class="field"><span>Quantidade total recebida</span><input name="qtyReceived" type="number" step="0.001" min="0" value="${escapeHtml(material.qtyReceived || required)}" required /></label>
+        <label class="field"><span>Quantidade total recebida</span><input name="qtyReceived" type="number" step="0.001" min="0" value="${escapeHtml(Math.max(num(material.qtyReceived), required))}" required /></label>
         <label class="field"><span>Data do recebimento</span><input name="receivedDate" type="date" value="${escapeHtml(material.receivedDate || todayISO())}" required /></label>
         <label class="field full"><span>Observação / divergência</span><textarea name="receiptNotes">${escapeHtml(material.receiptNotes || '')}</textarea></label>`,
       message: 'Recebimento atualizado'
@@ -1048,7 +1050,7 @@ function openQuickActionModal(material, action) {
     'send-paint': {
       title: 'Enviar para pintura', subtitle: material.description,
       fields: `
-        <label class="field"><span>Quantidade enviada</span><input name="paintingSentQty" type="number" step="0.001" min="0" value="${escapeHtml(material.paintingSentQty || availableNow)}" required /></label>
+        <label class="field"><span>Quantidade enviada</span><input name="paintingSentQty" type="number" step="0.001" min="0" value="${escapeHtml(Math.max(num(material.paintingSentQty), availableNow))}" required /></label>
         <label class="field"><span>Data de envio</span><input name="paintingSentDate" type="date" value="${escapeHtml(material.paintingSentDate || todayISO())}" required /></label>
         <label class="field"><span>Empresa de pintura</span><input name="paintingSupplier" value="${escapeHtml(material.paintingSupplier || '')}" /></label>
         <label class="field"><span>Previsão de retorno</span><input name="paintingEta" type="date" value="${escapeHtml(material.paintingEta || '')}" required /></label>`,
@@ -1057,7 +1059,7 @@ function openQuickActionModal(material, action) {
     'return-paint': {
       title: 'Registrar retorno da pintura', subtitle: material.description,
       fields: `
-        <label class="field"><span>Quantidade total retornada</span><input name="paintingReturnedQty" type="number" step="0.001" min="0" value="${escapeHtml(material.paintingReturnedQty || material.paintingSentQty || availableNow)}" required /></label>
+        <label class="field"><span>Quantidade total retornada</span><input name="paintingReturnedQty" type="number" step="0.001" min="0" value="${escapeHtml(Math.max(num(material.paintingReturnedQty), num(material.paintingSentQty)))}" required /></label>
         <label class="field"><span>Data de retorno</span><input name="paintingReturnDate" type="date" value="${escapeHtml(material.paintingReturnDate || todayISO())}" required /></label>
         <label class="field full"><span>Observações</span><textarea name="paintingNotes">${escapeHtml(material.paintingNotes || '')}</textarea></label>`,
       message: 'Retorno da pintura atualizado'
@@ -1065,7 +1067,7 @@ function openQuickActionModal(material, action) {
     separate: {
       title: 'Registrar separação', subtitle: `${material.description} · necessário ${fmtQty(required)} ${material.unit || 'un'}`,
       fields: `
-        <label class="field"><span>Quantidade total separada</span><input name="separatedQty" type="number" step="0.001" min="0" value="${escapeHtml(material.separatedQty || separableNow)}" required /></label>
+        <label class="field"><span>Quantidade total separada</span><input name="separatedQty" type="number" step="0.001" min="0" value="${escapeHtml(Math.max(num(material.separatedQty), separableNow))}" required /></label>
         <label class="field"><span>Data da separação</span><input name="separatedDate" type="date" value="${escapeHtml(material.separatedDate || todayISO())}" required /></label>
         <label class="field full"><span>Local / identificação do lote</span><input name="separationLocation" value="${escapeHtml(material.separationLocation || '')}" /></label>`,
       message: 'Separação atualizada'
@@ -1073,7 +1075,7 @@ function openQuickActionModal(material, action) {
     deliver: {
       title: 'Enviar material para a obra', subtitle: material.description,
       fields: `
-        <label class="field"><span>Quantidade total enviada</span><input name="siteDeliveredQty" type="number" step="0.001" min="0" value="${escapeHtml(material.siteDeliveredQty || num(material.separatedQty))}" required /></label>
+        <label class="field"><span>Quantidade total enviada</span><input name="siteDeliveredQty" type="number" step="0.001" min="0" value="${escapeHtml(Math.max(num(material.siteDeliveredQty), num(material.separatedQty)))}" required /></label>
         <label class="field"><span>Data do envio</span><input name="siteDeliveredDate" type="date" value="${escapeHtml(material.siteDeliveredDate || todayISO())}" required /></label>
         <label class="field full"><span>Recebido por / observações</span><input name="siteDeliveryNotes" value="${escapeHtml(material.siteDeliveryNotes || '')}" /></label>`,
       message: 'Envio para a obra atualizado'

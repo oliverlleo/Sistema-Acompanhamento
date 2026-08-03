@@ -204,7 +204,6 @@ function openBulkPurchaseModal(materialIds) {
       const data = Object.fromEntries(new FormData(form).entries());
       const updates = {};
       let updatedCount = 0;
-      let totalPurchaseQty = 0;
 
       for (const materialId of materialIds) {
         const snapshot = await get(ref(db, `materials/${projectId}/${materialId}`));
@@ -223,7 +222,6 @@ function openBulkPurchaseModal(materialIds) {
         updates[`${basePath}/updatedAt`] = merged.updatedAt;
         updates[`${basePath}/updatedBy`] = user.uid;
         updatedCount += 1;
-        totalPurchaseQty += alloc.purchaseQty;
       }
 
       if (!updatedCount) throw new Error('Nenhum item selecionado ainda precisava de compra.');
@@ -232,7 +230,7 @@ function openBulkPurchaseModal(materialIds) {
       const activityRef = push(ref(db, `activities/${projectId}`));
       await set(activityRef, {
         type: 'compra_em_lote',
-        message: `Compra registrada para ${updatedCount} item(ns), totalizando ${totalPurchaseQty} unidade(s) das parcelas de compra · ${data.supplier}`,
+        message: `Compra registrada para ${updatedCount} item(ns) · ${data.supplier}`,
         materialId: '',
         userId: user.uid,
         userName: user.email || 'Usuário',
