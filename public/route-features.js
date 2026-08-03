@@ -9,7 +9,8 @@ const loaded = {
   importar: false,
   compras: false,
   excelCompras: false,
-  medidas: false
+  medidas: false,
+  separados: false
 };
 
 function currentRoute() {
@@ -72,8 +73,28 @@ async function loadPurchaseExcelFeature() {
   }
 }
 
+async function loadSeparatedProjectsFeature() {
+  if (loaded.separados) {
+    window.ObraFlowSeparatedProjects?.render?.();
+    return;
+  }
+  loaded.separados = true;
+  try {
+    await import('./separated-projects.js?v=20260803-1348');
+    window.ObraFlowSeparatedProjects?.render?.();
+  } catch (error) {
+    loaded.separados = false;
+    console.error('Falha ao carregar materiais separados por obra:', error);
+  }
+}
+
 async function loadRouteFeature() {
   const route = currentRoute();
+
+  if (route === 'estoque') {
+    await loadSeparatedProjectsFeature();
+    return;
+  }
 
   if (route === 'importar') {
     if (!loaded.importar) {
