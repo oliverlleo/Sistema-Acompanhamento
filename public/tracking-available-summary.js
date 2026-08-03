@@ -43,7 +43,6 @@ function parseQuantity(material, value) {
 
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return 0;
-    // Planilhas antigas salvaram 435.554 m como 435554.
     if (isDecimalMeasure(material) && Number.isInteger(value) && Math.abs(value) >= 1000) {
       return value / 1000;
     }
@@ -96,9 +95,10 @@ function allocation(material = {}) {
   return { required, stockQty: 0, purchaseQty: 0 };
 }
 
-function totals() {
-  let stockPending = 0;
-  let purchasePending = 0;
+function itemCounts() {
+  let checkedItems = 0;
+  let stockItems = 0;
+  let receivedPurchaseItems = 0;
 
   materials.forEach(material => {
     const alloc = allocation(material);
@@ -107,34 +107,26 @@ function totals() {
     const sentToPainting = clamp(parseQuantity(material, material.paintingSentQty), 0, alloc.required || Number.MAX_SAFE_INTEGER);
     const returnedFromPainting = clamp(parseQuantity(material, material.paintingReturnedQty), 0, sentToPainting || Number.MAX_SAFE_INTEGER);
     const awayAtPainting = Math.max(0, sentToPainting - returnedFromPainting);
+    const alreadyUnavailable = separated + awayAtPainting;
 
-    // O que já foi separado ou está no pintor deixa de estar disponível na empresa.
-    const alreadyUsed = separated + awayAtPainting;
-
-    // Considera primeiro a parcela de estoque e depois a parcela recebida da compra.
-    const stockRemaining = Math.max(0, alloc.stockQty - alreadyUsed);
-    const usedBeyondStock = Math.max(0, alreadyUsed - alloc.stockQty);
+    const stockRemaining = Math.max(0, alloc.stockQty - alreadyUnavailable);
+    const usedBeyondStock = Math.max(0, alreadyUnavailable - alloc.stockQty);
     const purchaseRemaining = Math.max(0, received - usedBeyondStock);
 
-    stockPending += stockRemaining;
-    purchasePending += purchaseRemaining;
+    if (stockRemaining > 0 || purchaseRemaining > 0) checkedItems += 1;
+    if (stockRemaining > 0) stockItems += 1;
+    if (purchaseRemaining > 0) receivedPurchaseItems += 1;
   });
 
   return {
-    stockPending,
-    purchasePending,
-    totalPending: stockPending + purchasePending
+    totalItems: materials.length,
+    checkedItems,
+    stockItems,
+    receivedPurchaseItems
   };
 }
 
-function formatQuantity(value) {
-  return new Intl.NumberFormat('pt-BR', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 3
-  }).format(value);
-}
-
-function metric(label, value) {
+function metric(label, value, note = '') {
   const article = document.createElement('article');
   article.className = 'trk-metric';
   const labelElement = document.createElement('span');
@@ -142,6 +134,11 @@ function metric(label, value) {
   const strong = document.createElement('strong');
   strong.textContent = value;
   article.append(labelElement, strong);
+  if (note) {
+    const small = document.createElement('small');
+    small.textContent = note;
+    article.appendChild(small);
+  }
   return article;
 }
 
@@ -155,17 +152,23 @@ function patch() {
   const summary = $('.trk-summary');
   if (!summary) return;
 
-  const data = totals();
-  const signature = [data.totalPending, data.stockPending, data.purchasePending].join('|');
+  const data = itemCounts();
+  const signature = [
+    data.totalItems,
+    data.checkedItems,
+    data.stockItems,
+    data.receivedPurchaseItems
+  ].join('|');
+
   if (lastSignature === signature && summary.dataset.availableSummary === signature) return;
 
   lastSignature = signature;
   summary.dataset.availableSummary = signature;
   summary.style.gridTemplateColumns = 'repeat(3,minmax(0,1fr))';
   summary.replaceChildren(
-    metric('Disponível e ainda não separado', formatQuantity(data.totalPending)),
-    metric('Do estoque e ainda não separado', formatQuantity(data.stockPending)),
-    metric('Recebido da compra e ainda não separado', formatQuantity(data.purchasePending))
+    metric('Itens conferidos e ainda não separados', `${data.checkedItems} de ${data.totalItems}`, 'itens da obra'),
+    metric('Vindos do estoque', `${data.stockItems} itens`),
+    metric('Recebidos da compra', `${data.receivedPurchaseItems} itens`)
   );
 }
 
@@ -186,7 +189,7 @@ async function loadProject(id) {
     materials = Object.values(snapshot.val() || {});
     queuePatch();
   } catch (error) {
-    console.error('Falha ao calcular materiais conferidos:', error);
+    console.error('Falha ao contar materiais conferidos:', error);
   }
 }
 
