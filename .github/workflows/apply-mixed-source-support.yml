@@ -1,0 +1,486 @@
+name: Apply mixed source support
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/apply-mixed-source-support.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch application core
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('public/app.js')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              if old not in text:
+                  raise SystemExit(f'Pattern not found: {label}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              "  recebido_parcial: { label: 'Recebido parcialmente', tone: 'warning', stage: 38 },",
+              "  recebido_parcial: { label: 'Recebido parcialmente', tone: 'warning', stage: 38 },\n  atendimento_parcial: { label: 'Atendimento parcial', tone: 'warning', stage: 50 },",
+              'mixed status metadata'
+          )
+
+          flow_core = r'''function materialAllocation(material) {
+            const required = Math.max(0, num(material.qtyRequired));
+            const source = material.source || 'pendente';
+            if (source === 'estoque') return { required, source, stockQty: required, purchaseQty: 0, unallocatedQty: 0 };
+            if (source === 'compra') return { required, source, stockQty: 0, purchaseQty: required, unallocatedQty: 0 };
+            if (source === 'misto') {
+              const stockQty = clamp(num(material.stockRequiredQty), 0, required);
+              const hasPurchase = material.purchaseRequiredQty !== undefined && material.purchaseRequiredQty !== null && material.purchaseRequiredQty !== '';
+              const purchaseQty = clamp(hasPurchase ? num(material.purchaseRequiredQty) : required - stockQty, 0, required - stockQty);
+              return { required, source, stockQty, purchaseQty, unallocatedQty: Math.max(0, required - stockQty - purchaseQty) };
+            }
+            return { required, source, stockQty: 0, purchaseQty: 0, unallocatedQty: required };
+          }
+
+          function materialPurchaseCommitted(material) {
+            const { purchaseQty } = materialAllocation(material);
+            if (purchaseQty <= 0) return true;
+            if (material.purchaseDate || material.orderNumber || num(material.qtyReceived) > 0) return true;
+            return ['aguardando_entrega', 'compra_atrasada', 'recebido_parcial'].includes(material.status);
+          }
+
+          function materialReceivedPurchaseQty(material) {
+            const { purchaseQty } = materialAllocation(material);
+            return clamp(num(material.qtyReceived), 0, purchaseQty);
+          }
+
+          function materialAvailableQty(material) {
+            const { required, stockQty } = materialAllocation(material);
+            return clamp(stockQty + materialReceivedPurchaseQty(material), 0, required);
+          }
+
+          function materialSeparableQty(material) {
+            const { required } = materialAllocation(material);
+            const available = materialAvailableQty(material);
+            if (!material.paintingRequired) return available;
+            return clamp(num(material.paintingReturnedQty), 0, Math.min(required, available));
+          }
+
+          function materialCommittedQty(material) {
+            const { required, stockQty, purchaseQty } = materialAllocation(material);
+            const purchased = purchaseQty > 0 && materialPurchaseCommitted(material) ? purchaseQty : 0;
+            return clamp(stockQty + purchased, 0, required);
+          }
+
+          function materialPurchaseNeedsAction(material) {
+            const { purchaseQty } = materialAllocation(material);
+            return purchaseQty > 0 && !materialPurchaseCommitted(material);
+          }
+
+          function deriveMaterialStatus(material) {
+            const { required, stockQty, purchaseQty, unallocatedQty } = materialAllocation(material);
+            const delivered = num(material.siteDeliveredQty);
+            const separated = num(material.separatedQty);
+            const received = materialReceivedPurchaseQty(material);
+            const available = materialAvailableQty(material);
+            const paintSent = num(material.paintingSentQty);
+            const paintReturned = num(material.paintingReturnedQty);
+
+            if (required > 0 && delivered >= required) return 'enviado_obra';
+            if (delivered > 0) return 'enviado_parcial';
+            if (required > 0 && separated >= required) return 'separado';
+            if (separated > 0) return 'separado_parcial';
+
+            if (material.paintingRequired) {
+              if (required > 0 && paintReturned >= required) return 'pronto_separar';
+              if (paintReturned > 0) return 'pronto_separar';
+              if (paintSent > 0) return isPast(material.paintingEta) ? 'pintura_atrasada' : 'em_pintura';
+            }
+
+            if (required > 0 && available >= required) return material.paintingRequired ? 'aguarda_pintura' : 'pronto_separar';
+            if (available > 0) {
+              if (unallocatedQty > 0 || (purchaseQty > 0 && !materialPurchaseCommitted(material))) return 'atendimento_parcial';
+              return material.paintingRequired ? 'aguarda_pintura' : 'recebido_parcial';
+            }
+            if (unallocatedQty > 0) return 'comprar';
+            if (purchaseQty > 0) {
+              if (!materialPurchaseCommitted(material)) return 'comprar';
+              if (received < purchaseQty) return isPast(material.deliveryEta) ? 'compra_atrasada' : 'aguardando_entrega';
+            }
+            if (stockQty > 0) return material.paintingRequired ? 'aguarda_pintura' : 'pronto_separar';
+            return 'comprar';
+          }
+
+          function progressForMaterial(material) {
+            const status = material.status || deriveMaterialStatus(material);
+            if (['enviado_obra', 'enviado_parcial', 'separado', 'separado_parcial', 'em_pintura', 'pintura_atrasada', 'pronto_separar'].includes(status)) {
+              return statusMeta(status).stage;
+            }
+            const { required, stockQty, purchaseQty } = materialAllocation(material);
+            if (!required) return statusMeta(status).stage;
+            const stockStage = stockQty > 0 ? statusMeta(material.paintingRequired ? 'aguarda_pintura' : 'pronto_separar').stage : 0;
+            let purchaseStage = 0;
+            if (purchaseQty > 0 && materialPurchaseCommitted(material)) {
+              const received = materialReceivedPurchaseQty(material);
+              if (received >= purchaseQty) purchaseStage = statusMeta(material.paintingRequired ? 'aguarda_pintura' : 'pronto_separar').stage;
+              else if (received > 0) purchaseStage = statusMeta('recebido_parcial').stage;
+              else purchaseStage = statusMeta('aguardando_entrega').stage;
+            }
+            return Math.round(((stockQty * stockStage) + (purchaseQty * purchaseStage)) / required);
+          }'''
+
+          pattern = r"function deriveMaterialStatus\(material\) \{.*?\n\}\n\nfunction progressForMaterial\(material\) \{.*?\n\}"
+          text, count = re.subn(pattern, flow_core, text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit('Could not replace status and progress core')
+
+          replace_once(
+              "    recebido_parcial: [material.paintingRequired ? 'Enviar para pintura' : 'Confirmar chegada', material.paintingRequired ? 'send-paint' : 'receive'],",
+              "    recebido_parcial: [material.paintingRequired ? 'Enviar para pintura' : 'Confirmar chegada', material.paintingRequired ? 'send-paint' : 'receive'],\n    atendimento_parcial: ['Registrar compra', 'purchase'],",
+              'next action for partial allocation'
+          )
+
+          summary_core = r'''async function recalculateProjectSummary(projectId) {
+            if (!projectId) return;
+            const snap = await get(ref(db, `materials/${projectId}`));
+            const materials = Object.values(snap.val() || {});
+            const summary = {
+              total: materials.length, completed: 0, pending: 0, committed: 0, commitmentProgress: 0,
+              comprar: 0, aguardandoEntrega: 0, comprasAtrasadas: 0,
+              pintura: 0, pinturaAtrasada: 0, separar: 0, separados: 0,
+              enviados: 0, progress: 0, updatedAt: now()
+            };
+            let progressSum = 0;
+            let requiredSum = 0;
+            let committedSum = 0;
+            materials.forEach(item => {
+              const allocation = materialAllocation(item);
+              const status = deriveMaterialStatus(item);
+              const received = materialReceivedPurchaseQty(item);
+              const committed = materialCommittedQty(item);
+              const separated = num(item.separatedQty);
+              const delivered = num(item.siteDeliveredQty);
+              const separable = materialSeparableQty(item);
+
+              progressSum += progressForMaterial(item);
+              requiredSum += allocation.required;
+              committedSum += committed;
+              if (allocation.required > 0 && committed >= allocation.required) summary.committed += 1;
+              else summary.pending += 1;
+
+              if (status === 'enviado_obra') { summary.completed += 1; summary.enviados += 1; }
+              if (allocation.unallocatedQty > 0 || materialPurchaseNeedsAction(item)) summary.comprar += 1;
+              if (allocation.purchaseQty > 0 && materialPurchaseCommitted(item) && received < allocation.purchaseQty) {
+                if (isPast(item.deliveryEta)) summary.comprasAtrasadas += 1;
+                else summary.aguardandoEntrega += 1;
+              }
+              if (item.paintingRequired && !['separado', 'enviado_parcial', 'enviado_obra'].includes(status)) {
+                if (status === 'pintura_atrasada') summary.pinturaAtrasada += 1;
+                else if (materialAvailableQty(item) > 0 || num(item.paintingSentQty) > 0) summary.pintura += 1;
+              }
+              if (separable > separated || (separated > delivered && delivered < allocation.required)) summary.separar += 1;
+              if (allocation.required > 0 && separated >= allocation.required && delivered < allocation.required) summary.separados += 1;
+            });
+            summary.progress = materials.length ? Math.round(progressSum / materials.length) : 0;
+            summary.commitmentProgress = requiredSum ? Math.round((committedSum / requiredSum) * 100) : 0;
+            await set(ref(db, `projectSummaries/${projectId}`), summary);
+          }'''
+          text, count = re.subn(
+              r"async function recalculateProjectSummary\(projectId\) \{.*?\n\}\n\n// ---------- Dashboard e obras ----------",
+              summary_core + "\n\n// ---------- Dashboard e obras ----------",
+              text,
+              count=1,
+              flags=re.S
+          )
+          if count != 1:
+              raise SystemExit('Could not replace project summary')
+
+          text = text.replace("compras: ['Compras', 'Itens que precisam ser comprados ou ainda não chegaram']", "compras: ['Compras', 'Parcelas de compra que ainda precisam ser registradas']")
+          text = text.replace("kpiCard('Itens pendentes', totalPending, 'Ainda não enviados para a obra'", "kpiCard('Itens a empenhar', totalPending, 'Sem origem definida ou compra registrada'")
+          text = text.replace("${num(s.pending)} pendente(s)", "${num(s.pending)} a empenhar")
+          text = text.replace("<span>Pendentes</span>", "<span>A empenhar</span>")
+
+          route_core = r'''function materialMatchesRoute(material, route) {
+            const status = material.status || deriveMaterialStatus(material);
+            const allocation = materialAllocation(material);
+            const received = materialReceivedPurchaseQty(material);
+            const available = materialAvailableQty(material);
+            const separable = materialSeparableQty(material);
+            const separated = num(material.separatedQty);
+            const delivered = num(material.siteDeliveredQty);
+
+            if (route === 'compras') return allocation.purchaseQty > 0 && materialPurchaseNeedsAction(material);
+            if (route === 'recebimento') return allocation.purchaseQty > 0 && materialPurchaseCommitted(material) && received < allocation.purchaseQty;
+            if (route === 'pintura') {
+              return Boolean(material.paintingRequired)
+                && !['separado', 'enviado_parcial', 'enviado_obra'].includes(status)
+                && (available > num(material.paintingReturnedQty) || num(material.paintingSentQty) > num(material.paintingReturnedQty));
+            }
+            if (route === 'separacao') return separable > separated || separated > delivered;
+            return true;
+          }'''
+          text, count = re.subn(
+              r"function materialMatchesRoute\(material, route\) \{.*?\n\}",
+              route_core,
+              text,
+              count=1,
+              flags=re.S
+          )
+          if count != 1:
+              raise SystemExit('Could not replace route matching')
+
+          replace_once(
+              "    const haystack = normalizeText([item.code, item.description, item.type, item.color, item.supplier, item.orderNumber, item.notes].filter(Boolean).join(' '));",
+              "    const haystack = normalizeText([item.code, item.description, item.type, item.color, item.category, item.supplier, item.orderNumber, item.notes, item.dimensions, item.medidas, item.measurements, item.width, item.largura, item.height, item.altura, item.length, item.comprimento, item.medida, item.area, item.areaM2, item.m2, ...Object.values(item.sourceDetails || {})].filter(value => value !== undefined && value !== null && String(value).trim() !== '').join(' '));",
+              'measurement search fields'
+          )
+
+          row_core = r'''function materialRow(material) {
+            const status = material.status || deriveMaterialStatus(material);
+            const allocation = materialAllocation(material);
+            const available = materialAvailableQty(material);
+            const separable = materialSeparableQty(material);
+            const received = materialReceivedPurchaseQty(material);
+            const separated = num(material.separatedQty);
+            const delivered = num(material.siteDeliveredQty);
+            const paintSent = num(material.paintingSentQty);
+            const paintReturned = num(material.paintingReturnedQty);
+            let [actionLabel, action] = nextAction({ ...material, status });
+
+            if (state.route === 'compras') [actionLabel, action] = ['Registrar compra', 'purchase'];
+            else if (state.route === 'recebimento') [actionLabel, action] = ['Confirmar chegada', 'receive'];
+            else if (state.route === 'pintura') {
+              if (paintSent > paintReturned) [actionLabel, action] = ['Registrar retorno', 'return-paint'];
+              else if (available > paintSent) [actionLabel, action] = ['Enviar para pintura', 'send-paint'];
+              else [actionLabel, action] = ['Ver material', 'view'];
+            } else if (state.route === 'separacao') {
+              if (separated < separable) [actionLabel, action] = [separated > 0 ? 'Continuar separação' : 'Marcar separado', 'separate'];
+              else if (separated > delivered) [actionLabel, action] = [delivered > 0 ? 'Continuar envio' : 'Enviar para obra', 'deliver'];
+              else [actionLabel, action] = ['Ver material', 'view'];
+            } else if (state.route === 'materiais' && materialPurchaseNeedsAction(material)) {
+              [actionLabel, action] = ['Registrar compra', 'purchase'];
+            }
+
+            let currentQty = 0;
+            let requiredQty = allocation.required;
+            let quantityNote = '';
+            if (state.route === 'compras') {
+              requiredQty = allocation.purchaseQty;
+              quantityNote = 'Parcela de compra';
+            } else if (state.route === 'recebimento') {
+              currentQty = received;
+              requiredQty = allocation.purchaseQty;
+              quantityNote = 'Parcela de compra';
+            } else if (state.route === 'pintura') {
+              currentQty = Math.max(paintSent, paintReturned);
+              quantityNote = `Disponível: ${fmtQty(available)} ${material.unit || 'un'}`;
+            } else if (state.route === 'separacao') {
+              currentQty = separated;
+              quantityNote = `Disponível agora: ${fmtQty(separable)} ${material.unit || 'un'}`;
+            } else {
+              currentQty = delivered || separated || paintReturned || paintSent || available;
+            }
+
+            const pct = requiredQty ? clamp(Math.round((currentQty / requiredQty) * 100), 0, 100) : 0;
+            const eta = ['em_pintura', 'pintura_atrasada'].includes(status) ? material.paintingEta : material.deliveryEta;
+            const sourceLabel = allocation.source === 'misto' ? 'Compra + estoque'
+              : allocation.source === 'estoque' ? 'Estoque'
+              : allocation.source === 'compra' ? 'Compra'
+              : 'Definir depois';
+            const sourceTone = allocation.source === 'misto' ? 'warning'
+              : allocation.source === 'estoque' ? 'violet'
+              : allocation.source === 'compra' ? 'info'
+              : 'neutral';
+            const allocationNote = allocation.source === 'misto'
+              ? `${fmtQty(allocation.stockQty)} estoque + ${fmtQty(allocation.purchaseQty)} compra`
+              : '';
+
+            return `<tr>
+              <td><span class="cell-main">${escapeHtml(material.description || 'Sem descrição')}</span><span class="cell-sub">${escapeHtml([material.code, material.type, material.color].filter(Boolean).join(' · ') || 'Sem código')}</span></td>
+              <td>${escapeHtml(material.category || 'Sem categoria')}</td>
+              <td><span class="status-pill status-${sourceTone}">${sourceLabel}</span>${allocationNote ? `<span class="cell-sub">${escapeHtml(allocationNote)}</span>` : ''}${material.paintingRequired ? '<span class="cell-sub">com pintura</span>' : ''}</td>
+              <td class="qty-cell"><strong>${fmtQty(currentQty)} / ${fmtQty(requiredQty)} ${escapeHtml(material.unit || 'un')}</strong><div class="qty-track"><span style="width:${pct}%"></span></div>${quantityNote ? `<span class="cell-sub">${escapeHtml(quantityNote)}</span>` : ''}</td>
+              <td>${statusPill(status)}</td>
+              <td class="nowrap">${fmtDate(eta)}${eta && isPast(eta) && !['enviado_obra', 'separado'].includes(status) ? '<span class="cell-sub" style="color:var(--danger)">prazo vencido</span>' : ''}</td>
+              <td><button class="btn ${action === 'view' ? 'btn-ghost' : 'btn-secondary'} btn-sm" data-quick-action="${action}" data-material-id="${material.id}">${escapeHtml(actionLabel)}</button></td>
+              <td><div class="cell-actions"><button class="btn btn-ghost btn-sm" data-edit-material="${material.id}">Editar</button>${isManager() ? `<button class="btn btn-danger btn-sm" data-delete-material="${material.id}">×</button>` : ''}</div></td>
+            </tr>`;
+          }'''
+          text, count = re.subn(
+              r"function materialRow\(material\) \{.*?\n\}\n\nfunction renderActivityCard",
+              row_core + "\n\nfunction renderActivityCard",
+              text,
+              count=1,
+              flags=re.S
+          )
+          if count != 1:
+              raise SystemExit('Could not replace material row')
+
+          origin_section = r'''      <div class="section-title">Origem do material</div>
+                <label class="field"><span>Origem *</span><select id="materialSource" name="source"><option value="pendente" ${!material.source || material.source === 'pendente' ? 'selected' : ''}>Definir depois</option><option value="compra" ${material.source === 'compra' ? 'selected' : ''}>Precisa comprar</option><option value="estoque" ${material.source === 'estoque' ? 'selected' : ''}>Já existe no estoque</option><option value="misto" ${material.source === 'misto' ? 'selected' : ''}>Compra + estoque</option></select></label>
+                <label class="field source-mixed"><span>Quantidade do estoque</span><input name="stockRequiredQty" type="number" step="0.001" min="0" value="${escapeHtml(materialAllocation(material).stockQty)}" /></label>
+                <label class="field source-mixed"><span>Quantidade a comprar</span><input name="purchaseRequiredQty" type="number" step="0.001" min="0" value="${escapeHtml(materialAllocation(material).purchaseQty)}" readonly /></label>
+                <label class="field source-purchase"><span>Fornecedor</span><input name="supplier" value="${escapeHtml(material.supplier || '')}" /></label>
+                <label class="field source-purchase"><span>Pedido / OC</span><input name="orderNumber" value="${escapeHtml(material.orderNumber || '')}" /></label>
+                <label class="field source-purchase"><span>Data da compra</span><input name="purchaseDate" type="date" value="${escapeHtml(material.purchaseDate || '')}" /></label>
+                <label class="field source-purchase"><span>Previsão de chegada</span><input name="deliveryEta" type="date" value="${escapeHtml(material.deliveryEta || '')}" /></label>
+                <label class="field source-purchase"><span>Quantidade recebida da compra</span><input name="qtyReceived" type="number" step="0.001" min="0" value="${escapeHtml(material.qtyReceived ?? 0)}" /></label>
+                <input name="stockReservedQty" type="hidden" value="${escapeHtml(materialAllocation(material).stockQty)}" />
+                <label class="field source-stock"><span>Código no estoque</span><input name="stockItemCode" value="${escapeHtml(material.stockItemCode || '')}" /></label>
+                <label class="field source-stock"><span>Localização no estoque</span><input name="stockLocation" value="${escapeHtml(material.stockLocation || '')}" /></label>'''
+          text, count = re.subn(
+              r'''      <div class="section-title">Origem do material</div>.*?      <label class="field source-stock"><span>Localização no estoque</span><input name="stockLocation" value="\$\{escapeHtml\(material\.stockLocation \|\| ''\)\}" /></label>''',
+              origin_section,
+              text,
+              count=1,
+              flags=re.S
+          )
+          if count != 1:
+              raise SystemExit('Could not replace material origin fields')
+
+          source_sync = r'''  const sourceSelect = $('#materialSource');
+            const syncSourceFields = () => {
+              const mode = sourceSelect.value;
+              const isMixed = mode === 'misto';
+              const usesStock = mode === 'estoque' || isMixed;
+              const usesPurchase = mode === 'compra' || isMixed;
+              $$('.source-stock', $('#materialForm')).forEach(el => el.hidden = !usesStock);
+              $$('.source-purchase', $('#materialForm')).forEach(el => el.hidden = !usesPurchase);
+              $$('.source-mixed', $('#materialForm')).forEach(el => el.hidden = !isMixed);
+
+              const requiredInput = $('[name="qtyRequired"]', $('#materialForm'));
+              const stockInput = $('[name="stockRequiredQty"]', $('#materialForm'));
+              const purchaseInput = $('[name="purchaseRequiredQty"]', $('#materialForm'));
+              const reservedInput = $('[name="stockReservedQty"]', $('#materialForm'));
+              const required = Math.max(0, num(requiredInput?.value));
+              const stock = mode === 'estoque' ? required : isMixed ? clamp(num(stockInput?.value), 0, required) : 0;
+              const purchase = mode === 'compra' ? required : isMixed ? Math.max(0, required - stock) : 0;
+              if (stockInput && !isMixed) stockInput.value = stock;
+              if (purchaseInput) purchaseInput.value = purchase;
+              if (reservedInput) reservedInput.value = stock;
+            };
+            sourceSelect.addEventListener('change', syncSourceFields);
+            $('[name="qtyRequired"]', $('#materialForm'))?.addEventListener('input', syncSourceFields);
+            $('[name="stockRequiredQty"]', $('#materialForm'))?.addEventListener('input', syncSourceFields);
+            syncSourceFields();'''
+          text, count = re.subn(
+              r"  const sourceSelect = \$\('#materialSource'\);.*?sourceSelect\.addEventListener\('change', syncSourceFields\); syncSourceFields\(\);",
+              source_sync,
+              text,
+              count=1,
+              flags=re.S
+          )
+          if count != 1:
+              raise SystemExit('Could not replace source field synchronization')
+
+          save_allocation = r'''    const numericFields = ['qtyRequired', 'qtyReceived', 'stockReservedQty', 'stockRequiredQty', 'purchaseRequiredQty', 'paintingSentQty', 'paintingReturnedQty', 'separatedQty', 'siteDeliveredQty'];
+              numericFields.forEach(key => entries[key] = num(entries[key]));
+              entries.paintingRequired = $('#paintingRequired').checked;
+              const requiredQty = Math.max(0, entries.qtyRequired);
+              if (entries.source === 'misto') {
+                entries.stockRequiredQty = clamp(entries.stockRequiredQty, 0, requiredQty);
+                entries.purchaseRequiredQty = Math.max(0, requiredQty - entries.stockRequiredQty);
+                if (!(entries.stockRequiredQty > 0 && entries.purchaseRequiredQty > 0)) {
+                  setBusy(button, false);
+                  toast('Na origem Compra + estoque, informe uma quantidade de estoque maior que zero e menor que a quantidade necessária.', 'error');
+                  return;
+                }
+                entries.stockReservedQty = entries.stockRequiredQty;
+                entries.qtyReceived = clamp(entries.qtyReceived, 0, entries.purchaseRequiredQty);
+              } else if (entries.source === 'estoque') {
+                entries.stockRequiredQty = requiredQty;
+                entries.purchaseRequiredQty = 0;
+                entries.stockReservedQty = requiredQty;
+                entries.qtyReceived = 0;
+              } else if (entries.source === 'compra') {
+                entries.stockRequiredQty = 0;
+                entries.purchaseRequiredQty = requiredQty;
+                entries.stockReservedQty = 0;
+                entries.qtyReceived = clamp(entries.qtyReceived, 0, requiredQty);
+              } else {
+                entries.stockRequiredQty = 0;
+                entries.purchaseRequiredQty = 0;
+                entries.stockReservedQty = 0;
+                entries.qtyReceived = 0;
+              }
+              const id = materialId || push(ref(db, `materials/${state.currentProjectId}`)).key;'''
+          text, count = re.subn(
+              r"    const numericFields = \['qtyRequired', 'qtyReceived', 'stockReservedQty', 'paintingSentQty', 'paintingReturnedQty', 'separatedQty', 'siteDeliveredQty'\];.*?    const id = materialId \|\| push\(ref\(db, `materials/\$\{state\.currentProjectId\}`\)\)\.key;",
+              save_allocation,
+              text,
+              count=1,
+              flags=re.S
+          )
+          if count != 1:
+              raise SystemExit('Could not replace material allocation save')
+
+          replace_once(
+              "function openQuickActionModal(material, action) {\n  const required = num(material.qtyRequired);",
+              "function openQuickActionModal(material, action) {\n  const allocation = materialAllocation(material);\n  const totalRequired = allocation.required;\n  const availableNow = materialAvailableQty(material);\n  const separableNow = materialSeparableQty(material);\n  const required = ['purchase', 'receive'].includes(action) ? allocation.purchaseQty : action === 'reserve' ? allocation.stockQty : totalRequired;",
+              'quick action allocation limits'
+          )
+          text = text.replace("material.paintingSentQty || required", "material.paintingSentQty || availableNow")
+          text = text.replace("material.separatedQty || required", "material.separatedQty || separableNow")
+          text = text.replace("material.siteDeliveredQty || required", "material.siteDeliveredQty || num(material.separatedQty)")
+
+          quick_validation = r'''    ['stockReservedQty', 'qtyReceived', 'paintingSentQty', 'paintingReturnedQty', 'separatedQty', 'siteDeliveredQty'].forEach(key => { if (key in data) data[key] = num(data[key]); });
+              const limits = {
+                stockReservedQty: allocation.stockQty,
+                qtyReceived: allocation.purchaseQty,
+                paintingSentQty: availableNow,
+                paintingReturnedQty: num(material.paintingSentQty),
+                separatedQty: separableNow,
+                siteDeliveredQty: num(material.separatedQty)
+              };
+              const labels = {
+                stockReservedQty: 'quantidade de estoque',
+                qtyReceived: 'quantidade da parcela comprada',
+                paintingSentQty: 'quantidade disponível',
+                paintingReturnedQty: 'quantidade enviada para pintura',
+                separatedQty: 'quantidade disponível para separação',
+                siteDeliveredQty: 'quantidade separada'
+              };
+              for (const [field, limit] of Object.entries(limits)) {
+                if (field in data && data[field] > limit + 0.000001) {
+                  setBusy(button, false);
+                  toast(`A quantidade informada não pode ser maior que a ${labels[field]} (${fmtQty(limit)} ${material.unit || 'un'}).`, 'error');
+                  return;
+                }
+              }
+              const payload = { ...material, ...data, updatedAt: now(), updatedBy: state.user.uid };'''
+          text, count = re.subn(
+              r"    \['stockReservedQty', 'qtyReceived', 'paintingSentQty', 'paintingReturnedQty', 'separatedQty', 'siteDeliveredQty'\]\.forEach\(key => \{ if \(key in data\) data\[key\] = num\(data\[key\]\); \}\);\n    const payload = \{ \.\.\.material, \.\.\.data, updatedAt: now\(\), updatedBy: state\.user\.uid \};",
+              quick_validation,
+              text,
+              count=1
+          )
+          if count != 1:
+              raise SystemExit('Could not add quick action validation')
+
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Verify JavaScript syntax
+        run: |
+          node --check public/app.js
+          node --check public/material-flow.js
+          node --check public/bulk-source-choice-v2.js
+          node --check public/bulk-purchase.js
+          node --check public/commitment-summary.js
+      - name: Commit core changes
+        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/app.js
+          git commit -m 'Support mixed purchase and stock quantities across material flow'
+          git push
