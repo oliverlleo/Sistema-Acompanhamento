@@ -1,4 +1,4 @@
-const CACHE_NAME = 'obraflow-shell-v20260804-0718';
+const CACHE_NAME = 'obraflow-shell-v20260804-0942';
 const APP_SHELL = [
   './',
   './index.html',
@@ -11,8 +11,67 @@ const APP_SHELL = [
   './icon-maskable.svg',
   './app.js',
   './route-features.js',
-  './pwa-install.js'
+  './pwa-install.js',
+  './notification-center.js'
 ];
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const targetUrl = new URL(event.notification.data?.url || './#estoque', self.location.href).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+      const sameOrigin = clients.find(client => new URL(client.url).origin === self.location.origin);
+      if (sameOrigin) {
+        return sameOrigin.focus().then(client => {
+          if ('navigate' in client) return client.navigate(targetUrl);
+          return client;
+        });
+      }
+      return self.clients.openWindow(targetUrl);
+    })
+  );
+});
+
+try {
+  importScripts(
+    'https://www.gstatic.com/firebasejs/12.16.0/firebase-app-compat.js',
+    'https://www.gstatic.com/firebasejs/12.16.0/firebase-messaging-compat.js'
+  );
+
+  firebase.initializeApp({
+    apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
+    authDomain: 'sistemsquared.firebaseapp.com',
+    databaseURL: 'https://sistemsquared-default-rtdb.firebaseio.com',
+    projectId: 'sistemsquared',
+    storageBucket: 'sistemsquared.firebasestorage.app',
+    messagingSenderId: '43452051582',
+    appId: '1:43452051582:web:08a19296448eb66d0b282f'
+  });
+
+  const messaging = firebase.messaging();
+  messaging.onBackgroundMessage(payload => {
+    const data = payload.data || payload.notification || {};
+    const title = data.title || 'Atualização do ObraFlow';
+    const type = data.type || 'receipt';
+    const tag = data.notificationId || `${type}-${data.projectId || 'obraflow'}`;
+    const options = {
+      body: data.body || '',
+      icon: './icon-192.svg?v=20260803-2255',
+      badge: './icon-192.svg?v=20260803-2255',
+      tag,
+      renotify: type === 'category_complete' || type === 'project_receipts_complete',
+      data: {
+        url: data.url || './#estoque',
+        projectId: data.projectId || '',
+        materialId: data.materialId || '',
+        notificationId: data.notificationId || ''
+      }
+    };
+    return self.registration.showNotification(title, options);
+  });
+} catch (error) {
+  console.error('Não foi possível iniciar as notificações em segundo plano:', error);
+}
 
 self.addEventListener('install', event => {
   event.waitUntil(
