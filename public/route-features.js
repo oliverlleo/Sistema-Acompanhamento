@@ -1,7 +1,7 @@
 import './commitment-summary.js?v=20260803-0959';
 import './search-caret-fix.js?v=20260803-1025';
 import './direct-paint-delivery.js?v=20260803-1648';
-import './acompanhamento-detail.js?v=20260803-1648';
+import './acompanhamento-detail.js?v=20260804-1920';
 import './tracking-item-counts.js?v=20260804-1848';
 import './tracking-available-summary.js?v=20260804-1848';
 import './tracking-card-stock-count.js?v=20260803-1633';
