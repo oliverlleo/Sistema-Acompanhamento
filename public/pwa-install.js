@@ -1,7 +1,7 @@
 let deferredInstallPrompt = null;
 const DISMISS_KEY = 'obraflow-install-dismissed-at';
 const DISMISS_DAYS = 7;
-const PWA_VERSION = '20260804-0718';
+const PWA_VERSION = '20260804-0942';
 
 const userAgent = navigator.userAgent || '';
 const isIPadOS = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
@@ -100,45 +100,21 @@ function showBanner({ ios = false } = {}) {
 }
 
 async function registerServiceWorker() {
-  if (!isMobileDevice || !('serviceWorker' in navigator)) return;
+  if (!('serviceWorker' in navigator)) return;
   try {
     await navigator.serviceWorker.register('./sw.js', {
       scope: './',
       updateViaCache: 'none'
     });
   } catch (error) {
-    console.error('Falha ao registrar o aplicativo instalável:', error);
+    console.error('Falha ao registrar os recursos offline e de notificações:', error);
   }
 }
 
-async function disableDesktopPwa() {
+function disableDesktopInstallPrompt() {
   deferredInstallPrompt = null;
   closeBanner(false);
   document.querySelectorAll('link[rel="manifest"]').forEach(link => link.remove());
-
-  if ('serviceWorker' in navigator) {
-    try {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(registrations.map(registration => {
-        const worker = registration.active || registration.waiting || registration.installing;
-        const scriptUrl = worker?.scriptURL || '';
-        return scriptUrl.endsWith('/sw.js') ? registration.unregister() : Promise.resolve(false);
-      }));
-    } catch (error) {
-      console.error('Falha ao remover o PWA da versão desktop:', error);
-    }
-  }
-
-  if ('caches' in window) {
-    try {
-      const cacheNames = await caches.keys();
-      await Promise.all(cacheNames
-        .filter(name => name.startsWith('obraflow-'))
-        .map(name => caches.delete(name)));
-    } catch {
-      // O desktop continua funcionando normalmente sem limpar o cache.
-    }
-  }
 }
 
 window.addEventListener('beforeinstallprompt', event => {
@@ -161,10 +137,11 @@ window.addEventListener('appinstalled', () => {
   }
 });
 
+registerServiceWorker();
+
 if (isMobileDevice) {
   ensureManifest();
-  registerServiceWorker();
   if (isSafariIOS && !isInstalled()) setTimeout(() => showBanner({ ios: true }), 1600);
 } else {
-  disableDesktopPwa();
+  disableDesktopInstallPrompt();
 }
