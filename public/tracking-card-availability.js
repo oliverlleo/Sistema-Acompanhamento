@@ -25,6 +25,34 @@ function currentRoute() {
   return location.hash.replace(/^#/, '') || 'dashboard';
 }
 
+function ensureStyle() {
+  if (document.querySelector('#trackingCardAvailabilityStyle')) return;
+
+  const style = document.createElement('style');
+  style.id = 'trackingCardAvailabilityStyle';
+  style.textContent = `
+    .sep-donut-quantity .sep-donut-label{
+      width:100%;
+      padding:0 10px;
+      overflow:hidden;
+    }
+    .sep-donut-quantity .sep-donut-label small{
+      display:block;
+      max-width:66px;
+      margin-top:4px;
+      overflow:hidden;
+      color:#64748b;
+      font-size:7px;
+      font-weight:700;
+      line-height:1;
+      letter-spacing:0;
+      text-transform:none;
+      white-space:nowrap;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
 function percentage(value, total) {
   if (!(total > 0)) return { visual: 0, label: '0%' };
   const exact = Math.min(100, Math.max(0, (value / total) * 100));
@@ -81,13 +109,15 @@ function updateDonut(donut, meta, ariaLabel) {
   const strong = donut.querySelector('.sep-donut-label strong');
   const small = donut.querySelector('.sep-donut-label small');
   if (strong && strong.textContent !== meta.label) strong.textContent = meta.label;
-  if (small && small.textContent !== 'disponibilidade') small.textContent = 'disponibilidade';
+  if (small && small.textContent !== 'Disponibilidade') small.textContent = 'Disponibilidade';
   if (donut.getAttribute('aria-label') !== ariaLabel) donut.setAttribute('aria-label', ariaLabel);
 }
 
 function patchCards() {
   patchQueued = false;
   if (currentRoute() !== 'estoque') return;
+
+  ensureStyle();
 
   document.querySelectorAll('[data-separated-project]').forEach(card => {
     const projectId = card.dataset.separatedProject || '';
