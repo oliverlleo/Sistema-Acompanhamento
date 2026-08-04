@@ -1,7 +1,7 @@
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
 import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
-import { allocation, availableQty } from './material-flow.js?v=20260803-1648';
+import { allocation, availableQty, quantityNumber } from './material-flow.js?v=20260803-1648';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
@@ -62,6 +62,15 @@ function percentage(value, total) {
   };
 }
 
+function companyAvailableQty(material) {
+  const baseAvailable = availableQty(material);
+  const sentToPainting = Math.max(0, quantityNumber(material, material.paintingSentQty));
+  const returnedFromPainting = Math.max(0, quantityNumber(material, material.paintingReturnedQty));
+  const awayAtPainting = Math.max(0, sentToPainting - returnedFromPainting);
+  const deliveredToSite = Math.max(0, quantityNumber(material, material.siteDeliveredQty));
+  return Math.max(0, baseAvailable - awayAtPainting - deliveredToSite);
+}
+
 function availabilityForProject(projectId) {
   const materials = Object.values(materialsByProject[projectId] || {});
   let requiredQuantity = 0;
@@ -70,7 +79,7 @@ function availabilityForProject(projectId) {
   materials.forEach(material => {
     const alloc = allocation(material);
     requiredQuantity += alloc.required;
-    availableQuantity += availableQty(material);
+    availableQuantity += companyAvailableQty(material);
   });
 
   return {
@@ -130,7 +139,7 @@ function patchCards() {
     updateDonut(
       donut,
       data.quantityPercent,
-      `${data.quantityPercent.label} de disponibilidade por quantidade: estoque e compras recebidas`
+      `${data.quantityPercent.label} de disponibilidade na empresa, incluindo materiais separados em produção`
     );
   });
 }
