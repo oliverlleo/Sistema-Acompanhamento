@@ -157,27 +157,33 @@ function metric(label, value, note = '') {
   return article;
 }
 
+function setText(element, value) {
+  if (element && element.textContent !== value) element.textContent = value;
+}
+
 function patchStageAndProgress(data) {
   const meta = percentage(data.availableQty, data.totalRequiredQty);
   const stage = $('[data-tracking-stage="disponivel"]');
   const donut = $('.trk-donut', stage);
   const donutLabel = $('.trk-donut strong', stage);
   const stageQuantity = $('.trk-stage-copy span', stage);
+  const stageText = `${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)}`;
 
-  if (donut) donut.style.setProperty('--value', String(meta.visual));
-  if (donutLabel) donutLabel.textContent = meta.label;
-  if (stageQuantity) {
-    stageQuantity.textContent = `${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)}`;
+  if (donut && donut.style.getPropertyValue('--value') !== String(meta.visual)) {
+    donut.style.setProperty('--value', String(meta.visual));
   }
+  setText(donutLabel, meta.label);
+  setText(stageQuantity, stageText);
 
   if (!stage?.classList.contains('active')) return;
   const progress = $('.trk-progress-card');
   const progressStrong = $('.trk-progress-head strong', progress);
   const progressBar = $('.trk-progress i', progress);
-  if (progressStrong) {
-    progressStrong.textContent = `${meta.label} · ${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)}`;
+  const progressText = `${meta.label} · ${stageText}`;
+  setText(progressStrong, progressText);
+  if (progressBar && progressBar.style.width !== `${meta.visual}%`) {
+    progressBar.style.width = `${meta.visual}%`;
   }
-  if (progressBar) progressBar.style.width = `${meta.visual}%`;
 }
 
 function originMeta(source) {
@@ -235,7 +241,8 @@ function applyAvailableSearch() {
     if (match) visible += 1;
   });
 
-  if (count) count.textContent = `${visible} item${visible === 1 ? '' : 's'}`;
+  const countText = `${visible} item${visible === 1 ? '' : 's'}`;
+  setText(count, countText);
   const empty = $('#trackingEmpty', tbody);
   if (empty) empty.hidden = visible !== 0;
 }
@@ -246,7 +253,7 @@ function patchAvailableRows(data) {
   if (!table || !tbody) return;
 
   const headers = $$('thead th', table);
-  if (headers[5]) headers[5].textContent = 'Disponível na empresa';
+  setText(headers[5], 'Disponível na empresa');
 
   const rowsSignature = data.availableRows
     .map(row => [
