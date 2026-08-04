@@ -144,7 +144,7 @@ function stageData(items) {
     const paintReturned = clamp(quantityNumber(material, material.paintingReturnedQty), 0, paintSent || Number.MAX_SAFE_INTEGER);
     const inPaint = Math.max(0, paintSent - paintReturned);
     const checkedAvailable = availableQty(material);
-    const readyPending = Math.max(0, checkedAvailable - inPaint - separated);
+    const readyPending = Math.max(0, checkedAvailable - inPaint);
 
     data.totalRequired += required;
     data.separatedQty += Math.min(separated, required || separated);
@@ -353,7 +353,7 @@ function availableRows(items) {
       const paintSent = quantityNumber(material, material.paintingSentQty);
       const paintReturned = quantityNumber(material, material.paintingReturnedQty);
       const currentAwayAtPainting = Math.max(0, paintSent - paintReturned);
-      const ready = Math.max(0, availableQty(material) - currentAwayAtPainting - separated);
+      const ready = Math.max(0, availableQty(material) - currentAwayAtPainting);
       return { material, alloc, received, ready };
     })
     .filter(row => row.ready > 0)
