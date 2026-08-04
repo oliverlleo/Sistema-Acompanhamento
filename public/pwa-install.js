@@ -1,6 +1,17 @@
 let deferredInstallPrompt = null;
 const DISMISS_KEY = 'obraflow-install-dismissed-at';
 const DISMISS_DAYS = 7;
+const PWA_VERSION = '20260804-0718';
+
+const userAgent = navigator.userAgent || '';
+const isIPadOS = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+const isMobileDevice = navigator.userAgentData?.mobile === true
+  || /android|iphone|ipad|ipod|iemobile|opera mini/i.test(userAgent)
+  || isIPadOS;
+const isIOS = /iphone|ipad|ipod/i.test(userAgent) || isIPadOS;
+const isSafariIOS = isIOS
+  && /safari/i.test(userAgent)
+  && !/crios|fxios|edgios/i.test(userAgent);
 
 function isInstalled() {
   return window.matchMedia('(display-mode: standalone)').matches
@@ -24,6 +35,14 @@ function rememberDismissal() {
   }
 }
 
+function ensureManifest() {
+  if (!isMobileDevice || document.querySelector('link[rel="manifest"]')) return;
+  const manifest = document.createElement('link');
+  manifest.rel = 'manifest';
+  manifest.href = `./manifest.webmanifest?v=${PWA_VERSION}`;
+  document.head.appendChild(manifest);
+}
+
 function ensureStyle() {
   if (document.querySelector('#pwaInstallStyle')) return;
   const style = document.createElement('style');
@@ -45,7 +64,7 @@ function closeBanner(remember = false) {
 }
 
 function showBanner({ ios = false } = {}) {
-  if (isInstalled() || recentlyDismissed() || document.querySelector('[data-pwa-install-banner]')) return;
+  if (!isMobileDevice || isInstalled() || recentlyDismissed() || document.querySelector('[data-pwa-install-banner]')) return;
   ensureStyle();
 
   const banner = document.createElement('aside');
@@ -81,16 +100,53 @@ function showBanner({ ios = false } = {}) {
 }
 
 async function registerServiceWorker() {
-  if (!('serviceWorker' in navigator)) return;
+  if (!isMobileDevice || !('serviceWorker' in navigator)) return;
   try {
-    await navigator.serviceWorker.register('./sw.js', { scope: './' });
+    await navigator.serviceWorker.register('./sw.js', {
+      scope: './',
+      updateViaCache: 'none'
+    });
   } catch (error) {
     console.error('Falha ao registrar o aplicativo instalável:', error);
   }
 }
 
+async function disableDesktopPwa() {
+  deferredInstallPrompt = null;
+  closeBanner(false);
+  document.querySelectorAll('link[rel="manifest"]').forEach(link => link.remove());
+
+  if ('serviceWorker' in navigator) {
+    try {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map(registration => {
+        const worker = registration.active || registration.waiting || registration.installing;
+        const scriptUrl = worker?.scriptURL || '';
+        return scriptUrl.endsWith('/sw.js') ? registration.unregister() : Promise.resolve(false);
+      }));
+    } catch (error) {
+      console.error('Falha ao remover o PWA da versão desktop:', error);
+    }
+  }
+
+  if ('caches' in window) {
+    try {
+      const cacheNames = await caches.keys();
+      await Promise.all(cacheNames
+        .filter(name => name.startsWith('obraflow-'))
+        .map(name => caches.delete(name)));
+    } catch {
+      // O desktop continua funcionando normalmente sem limpar o cache.
+    }
+  }
+}
+
 window.addEventListener('beforeinstallprompt', event => {
   event.preventDefault();
+  if (!isMobileDevice) {
+    deferredInstallPrompt = null;
+    return;
+  }
   deferredInstallPrompt = event;
   setTimeout(() => showBanner(), 600);
 });
@@ -105,9 +161,10 @@ window.addEventListener('appinstalled', () => {
   }
 });
 
-registerServiceWorker();
-
-const userAgent = navigator.userAgent || '';
-const isIOS = /iphone|ipad|ipod/i.test(userAgent);
-const isSafariIOS = isIOS && /safari/i.test(userAgent) && !/crios|fxios|edgios/i.test(userAgent);
-if (isSafariIOS && !isInstalled()) setTimeout(() => showBanner({ ios: true }), 1600);
+if (isMobileDevice) {
+  ensureManifest();
+  registerServiceWorker();
+  if (isSafariIOS && !isInstalled()) setTimeout(() => showBanner({ ios: true }), 1600);
+} else {
+  disableDesktopPwa();
+}
