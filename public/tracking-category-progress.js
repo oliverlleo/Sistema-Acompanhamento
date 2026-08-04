@@ -69,10 +69,9 @@ function categoryData(stage) {
       current.total += alloc.purchaseQty;
       if (purchaseCommitted(material)) current.value += alloc.purchaseQty;
     } else if (stage === 'disponivel') {
-      // Na disponibilidade, a porcentagem é por quantidade de itens.
-      // O item separado em produção continua disponível.
-      current.total += 1;
-      if (companyAvailableQty(material) > 0) current.value += 1;
+      if (!(alloc.required > 0)) return;
+      current.total += alloc.required;
+      current.value += Math.min(companyAvailableQty(material), alloc.required);
     } else {
       return;
     }
@@ -121,7 +120,7 @@ function patchCategories() {
     section.dataset.trackingCategoryProgress = 'true';
   }
 
-  const action = activeStage === 'comprado' ? 'comprados' : 'itens disponíveis';
+  const action = activeStage === 'comprado' ? 'comprados' : 'disponíveis na empresa';
   section.dataset.signature = signature;
   section.innerHTML = categories.map(category => `
     <article class="trk-category" title="${escapeHtml(category.name)}">
