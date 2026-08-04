@@ -1,7 +1,7 @@
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
 import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
-import { availableQty, quantityNumber } from './material-flow.js?v=20260803-1648';
+import { allocation, availableQty } from './material-flow.js?v=20260803-1648';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
@@ -25,6 +25,34 @@ function currentRoute() {
   return location.hash.replace(/^#/, '') || 'dashboard';
 }
 
+function ensureStyle() {
+  if (document.querySelector('#trackingCardAvailabilityStyle')) return;
+
+  const style = document.createElement('style');
+  style.id = 'trackingCardAvailabilityStyle';
+  style.textContent = `
+    .sep-donut-quantity .sep-donut-label{
+      width:100%;
+      padding:0 10px;
+      overflow:hidden;
+    }
+    .sep-donut-quantity .sep-donut-label small{
+      display:block;
+      max-width:66px;
+      margin-top:4px;
+      overflow:hidden;
+      color:#64748b;
+      font-size:7px;
+      font-weight:700;
+      line-height:1;
+      letter-spacing:0;
+      text-transform:none;
+      white-space:nowrap;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
 function percentage(value, total) {
   if (!(total > 0)) return { visual: 0, label: '0%' };
   const exact = Math.min(100, Math.max(0, (value / total) * 100));
@@ -34,27 +62,21 @@ function percentage(value, total) {
   };
 }
 
-function companyAvailableQty(material) {
-  const baseAvailable = availableQty(material);
-  const sentToPainting = Math.max(0, quantityNumber(material, material.paintingSentQty));
-  const returnedFromPainting = Math.max(0, quantityNumber(material, material.paintingReturnedQty));
-  const awayAtPainting = Math.max(0, sentToPainting - returnedFromPainting);
-  const deliveredToSite = Math.max(0, quantityNumber(material, material.siteDeliveredQty));
-
-  // Material separado em produção continua disponível. Só descontamos o que
-  // está fora em pintura e o que já foi enviado para a obra.
-  return Math.max(0, baseAvailable - awayAtPainting - deliveredToSite);
-}
-
 function availabilityForProject(projectId) {
   const materials = Object.values(materialsByProject[projectId] || {});
-  const totalItems = materials.length;
-  const availableItems = materials.filter(material => companyAvailableQty(material) > 0).length;
+  let requiredQuantity = 0;
+  let availableQuantity = 0;
+
+  materials.forEach(material => {
+    const alloc = allocation(material);
+    requiredQuantity += alloc.required;
+    availableQuantity += availableQty(material);
+  });
 
   return {
-    totalItems,
-    availableItems,
-    itemPercent: percentage(availableItems, totalItems)
+    requiredQuantity,
+    availableQuantity,
+    quantityPercent: percentage(availableQuantity, requiredQuantity)
   };
 }
 
@@ -64,22 +86,22 @@ function normalizeIndicator(card) {
 
   const oldBlock = head.querySelector(':scope > .sep-availability-block');
   if (oldBlock) {
-    const donut = oldBlock.querySelector('.sep-donut') || oldBlock.firstElementChild;
-    if (!donut) return null;
-    oldBlock.replaceWith(donut);
+    const quantityDonut = oldBlock.querySelector('.sep-donut-quantity')
+      || oldBlock.querySelector('.sep-donut');
+    if (!quantityDonut) return null;
+    oldBlock.replaceWith(quantityDonut);
   }
 
   const donut = head.querySelector(':scope > .sep-donut');
   if (!donut) return null;
 
-  donut.classList.add('sep-donut-items');
-  donut.classList.remove('sep-donut-quantity');
+  donut.classList.add('sep-donut-quantity');
+  donut.classList.remove('sep-donut-items');
   donut.style.removeProperty('--size');
   return donut;
 }
 
-function updateDonut(donut, data) {
-  const meta = data.itemPercent;
+function updateDonut(donut, meta, ariaLabel) {
   if (donut.style.getPropertyValue('--value') !== String(meta.visual)) {
     donut.style.setProperty('--value', String(meta.visual));
   }
@@ -88,14 +110,14 @@ function updateDonut(donut, data) {
   const small = donut.querySelector('.sep-donut-label small');
   if (strong && strong.textContent !== meta.label) strong.textContent = meta.label;
   if (small && small.textContent !== 'Disponibilidade') small.textContent = 'Disponibilidade';
-
-  const ariaLabel = `${meta.label} de itens disponíveis: ${data.availableItems} de ${data.totalItems}, incluindo os separados em produção`;
   if (donut.getAttribute('aria-label') !== ariaLabel) donut.setAttribute('aria-label', ariaLabel);
 }
 
 function patchCards() {
   patchQueued = false;
   if (currentRoute() !== 'estoque') return;
+
+  ensureStyle();
 
   document.querySelectorAll('[data-separated-project]').forEach(card => {
     const projectId = card.dataset.separatedProject || '';
@@ -104,7 +126,12 @@ function patchCards() {
     const donut = normalizeIndicator(card);
     if (!donut) return;
 
-    updateDonut(donut, availabilityForProject(projectId));
+    const data = availabilityForProject(projectId);
+    updateDonut(
+      donut,
+      data.quantityPercent,
+      `${data.quantityPercent.label} de disponibilidade por quantidade: estoque e compras recebidas`
+    );
   });
 }
 
