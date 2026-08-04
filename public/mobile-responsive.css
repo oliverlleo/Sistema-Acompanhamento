@@ -1,0 +1,1037 @@
+/*
+ * Ajustes exclusivos para celular e tablet.
+ * Nenhuma regra deste arquivo afeta telas maiores que 900px.
+ */
+@media (max-width: 900px) {
+  html,
+  body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    max-width: 100%;
+  }
+
+  button,
+  .btn,
+  .nav-item {
+    touch-action: manipulation;
+  }
+
+  .app-shell,
+  .workspace,
+  .view,
+  #view {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Navegação e cabeçalho */
+  .sidebar {
+    width: min(86vw, 320px);
+    max-width: 320px;
+    height: 100dvh;
+    padding-top: max(18px, env(safe-area-inset-top));
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+    overflow: hidden;
+  }
+
+  .main-nav {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .topbar {
+    width: 100%;
+    min-height: 72px;
+    height: auto;
+    gap: 10px;
+    padding: 11px 14px;
+  }
+
+  .topbar-left {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .topbar-left > div {
+    min-width: 0;
+  }
+
+  .topbar h1,
+  .topbar p {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .topbar-actions {
+    flex: 0 1 190px;
+    min-width: 0;
+    max-width: 44%;
+  }
+
+  .project-select-wrap {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .project-select-wrap select {
+    width: 100%;
+    min-width: 0 !important;
+    max-width: 100%;
+  }
+
+  .view {
+    padding: 16px;
+    overflow-x: hidden;
+  }
+
+  /* Estrutura comum de todas as abas */
+  .page-head {
+    min-width: 0;
+  }
+
+  .page-head > div,
+  .page-head h2,
+  .page-head p {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .page-head p {
+    line-height: 1.45;
+  }
+
+  .page-actions {
+    max-width: 100%;
+  }
+
+  .toolbar {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .toolbar .grow,
+  .toolbar input,
+  .toolbar select {
+    width: 100%;
+    min-width: 0 !important;
+  }
+
+  .toolbar .btn {
+    min-height: 42px;
+  }
+
+  .card,
+  .kpi-card,
+  .project-card,
+  .stock-card,
+  .user-card,
+  .detail-hero,
+  .table-wrap,
+  .preview-table {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .card-head,
+  .card-body {
+    min-width: 0;
+  }
+
+  .table-wrap,
+  .preview-table {
+    width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .data-table {
+    min-width: 760px;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 10px 11px;
+  }
+
+  .cell-main,
+  .cell-sub {
+    max-width: 240px;
+    overflow-wrap: anywhere;
+  }
+
+  .cell-actions {
+    min-width: 128px;
+    flex-wrap: wrap;
+  }
+
+  .project-row {
+    min-width: 0;
+  }
+
+  .project-name,
+  .project-name strong,
+  .project-name small {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .project-card h3,
+  .project-card p,
+  .user-card h3,
+  .user-card p {
+    overflow-wrap: anywhere;
+  }
+
+  .flow-strip {
+    min-width: 0;
+  }
+
+  /* Formulários e modais */
+  .form-grid,
+  .form-grid.cols-3,
+  .mapping-grid {
+    min-width: 0;
+  }
+
+  .field,
+  .field.full,
+  .check-row,
+  .import-note {
+    min-width: 0;
+  }
+
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal,
+  .modal-sm {
+    width: 100%;
+    max-width: 100%;
+    max-height: 96dvh;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .modal-head {
+    position: sticky;
+    z-index: 2;
+    top: 0;
+    padding: 16px;
+    background: #fff;
+  }
+
+  .modal-head > div {
+    min-width: 0;
+  }
+
+  .modal-head h2,
+  .modal-head p {
+    overflow-wrap: anywhere;
+  }
+
+  .modal-body {
+    min-height: 0;
+    padding: 16px;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .modal-foot {
+    position: sticky;
+    z-index: 2;
+    bottom: 0;
+    flex-wrap: wrap;
+    padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .modal-foot .btn {
+    flex: 1 1 140px;
+    min-height: 42px;
+  }
+
+  .toast-host {
+    right: 10px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    left: 10px;
+  }
+
+  .toast {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Importação */
+  .import-layout {
+    min-width: 0;
+  }
+
+  .dropzone {
+    min-height: 165px;
+    padding: 18px 14px;
+  }
+
+  .file-badge {
+    align-items: flex-start;
+    gap: 8px;
+    flex-wrap: wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .pdf-lines {
+    max-width: 100%;
+    overflow: auto;
+  }
+
+  /* Recebimento global */
+  .gr-shell,
+  .gr-hero,
+  .gr-kpis,
+  .gr-filters,
+  .gr-table-card,
+  .gr-table-wrap {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .gr-hero {
+    padding: 18px;
+    border-radius: 17px;
+  }
+
+  .gr-hero h2 {
+    font-size: 22px;
+    line-height: 1.15;
+  }
+
+  .gr-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .gr-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    padding: 11px;
+  }
+
+  .gr-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .gr-table {
+    min-width: 900px !important;
+  }
+
+  .gr-table th,
+  .gr-table td {
+    padding: 10px 11px;
+  }
+
+  .gr-main {
+    max-width: 230px;
+  }
+
+  .gr-project {
+    min-width: 145px;
+  }
+
+  .gr-qty {
+    min-width: 145px;
+  }
+
+  #globalReceivingRoot [data-global-receive] {
+    min-width: 132px;
+    white-space: normal;
+    line-height: 1.25;
+  }
+
+  .supervisor-readonly-note {
+    align-items: flex-start !important;
+    flex-direction: column;
+  }
+
+  /* Acompanhamento: lista de obras */
+  .sep-shell,
+  .sep-toolbar,
+  .sep-project-grid,
+  .sep-project-card,
+  .sep-detail-top,
+  .sep-detail-summary,
+  .sep-table-card,
+  .sep-table-wrap {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .sep-toolbar {
+    padding: 11px;
+  }
+
+  .sep-search {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .sep-project-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr));
+  }
+
+  .sep-project-card {
+    min-height: 0;
+    padding: 17px;
+  }
+
+  .sep-card-copy h3,
+  .sep-card-copy p {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .sep-card-foot {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .sep-qty-summary {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .sep-detail-top {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 18px;
+  }
+
+  .sep-detail-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .sep-category-strip,
+  .sep-categories {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sep-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .sep-table {
+    min-width: 790px;
+  }
+
+  .sep-table th,
+  .sep-table td {
+    padding: 10px 11px;
+  }
+
+  .sep-material-main {
+    max-width: 230px;
+  }
+
+  /* Acompanhamento: detalhe da obra */
+  .trk-shell,
+  .trk-hero,
+  .trk-stage-grid,
+  .trk-panel,
+  .trk-summary,
+  .trk-table-card,
+  .trk-table-wrap {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .trk-hero {
+    padding: 18px;
+  }
+
+  .trk-project h2,
+  .trk-project p {
+    overflow-wrap: anywhere;
+  }
+
+  .trk-stage-grid {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .trk-stage {
+    scroll-snap-align: start;
+  }
+
+  .trk-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .trk-metric strong,
+  .trk-metric small,
+  .trk-progress-head span,
+  .trk-progress-head strong {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .trk-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .trk-table {
+    min-width: 790px;
+  }
+
+  .trk-table th,
+  .trk-table td {
+    padding: 10px 11px;
+  }
+
+  .trk-main {
+    max-width: 230px;
+  }
+
+  /* Calendário */
+  .cal-shell,
+  .cal-hero,
+  .cal-kpis,
+  .cal-controls,
+  .cal-board,
+  .cal-month-grid,
+  .cal-weekdays,
+  .cal-week-grid {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .cal-hero {
+    padding: 18px;
+  }
+
+  .cal-view-toggle {
+    flex: 0 0 auto;
+  }
+
+  .cal-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .cal-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    padding: 11px;
+  }
+
+  .cal-board {
+    overflow: hidden;
+  }
+
+  .cal-board-head {
+    min-width: 0;
+  }
+
+  .cal-period {
+    min-width: 0;
+  }
+
+  .cal-period > div,
+  .cal-period h3,
+  .cal-period small {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .cal-month-grid,
+  .cal-weekdays {
+    min-width: 0 !important;
+    width: 100%;
+  }
+
+  .cal-weekdays span {
+    padding: 8px 2px;
+    font-size: 8px;
+  }
+
+  .cal-day {
+    min-width: 0;
+    min-height: 88px;
+    padding: 6px;
+  }
+
+  .cal-day-top {
+    margin-bottom: 5px;
+  }
+
+  .cal-day-number {
+    width: 23px;
+    height: 23px;
+  }
+
+  .cal-chip {
+    padding: 4px 5px;
+    font-size: 8px;
+  }
+
+  .cal-week-grid {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .cal-week-day {
+    flex: 0 0 min(330px, 82vw);
+    min-height: 360px;
+    scroll-snap-align: start;
+  }
+
+  .cal-undated-list {
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .cal-drawer {
+    width: min(100vw, 470px);
+    height: 100dvh;
+  }
+
+  /* Aviso de instalação do PWA */
+  .pwa-install-banner {
+    width: calc(100% - 20px) !important;
+    max-width: 520px;
+    bottom: max(10px, env(safe-area-inset-bottom)) !important;
+  }
+}
+
+@media (max-width: 680px) {
+  .topbar {
+    padding: 10px 11px;
+  }
+
+  .topbar-actions {
+    flex-basis: 132px;
+    max-width: 132px;
+  }
+
+  .project-select-wrap select {
+    height: 40px;
+    padding-right: 25px;
+    font-size: 11px;
+  }
+
+  .view {
+    padding: 12px;
+  }
+
+  .page-head {
+    gap: 12px;
+    margin-bottom: 15px;
+  }
+
+  .page-head h2 {
+    font-size: 21px;
+  }
+
+  .page-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .page-actions .btn {
+    width: 100%;
+    min-height: 42px;
+  }
+
+  .toolbar {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .toolbar .btn {
+    width: 100%;
+  }
+
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px;
+  }
+
+  .kpi-card {
+    padding: 14px;
+  }
+
+  .kpi-value {
+    font-size: 25px;
+  }
+
+  .dashboard-grid,
+  .project-cards,
+  .stock-grid,
+  .user-grid,
+  .import-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  .project-card,
+  .stock-card,
+  .user-card {
+    padding: 15px;
+  }
+
+  .project-stats {
+    gap: 6px;
+  }
+
+  .project-stat {
+    padding: 8px 7px;
+  }
+
+  .project-row {
+    grid-template-columns: minmax(0, 1fr) 86px;
+    gap: 10px;
+    padding: 13px 14px;
+  }
+
+  .card-head,
+  .card-body {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .flow-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .form-grid,
+  .form-grid.cols-3,
+  .mapping-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .modal,
+  .modal-sm {
+    height: auto;
+    max-height: 96dvh;
+  }
+
+  .data-table {
+    min-width: 700px;
+  }
+
+  /* Recebimento */
+  .gr-shell {
+    gap: 12px;
+  }
+
+  .gr-hero {
+    gap: 8px;
+    padding: 16px;
+  }
+
+  .gr-hero h2 {
+    font-size: 20px;
+  }
+
+  .gr-kpis {
+    gap: 9px;
+  }
+
+  .gr-kpi {
+    padding: 13px;
+  }
+
+  .gr-kpi strong {
+    font-size: 20px;
+  }
+
+  .gr-filters {
+    grid-template-columns: 1fr !important;
+    gap: 8px;
+  }
+
+  .gr-table-head {
+    gap: 4px;
+    padding: 13px 14px;
+  }
+
+  .gr-table {
+    min-width: 840px !important;
+  }
+
+  /* Acompanhamento: lista */
+  .sep-toolbar {
+    gap: 9px;
+  }
+
+  .sep-project-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sep-project-card {
+    padding: 15px;
+  }
+
+  .sep-card-head {
+    align-items: center;
+  }
+
+  .sep-donut {
+    --size: 72px !important;
+  }
+
+  .sep-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sep-stat:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .sep-detail-top {
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .sep-detail-summary {
+    gap: 9px;
+  }
+
+  .sep-detail-metric {
+    padding: 13px;
+  }
+
+  .sep-detail-metric strong {
+    font-size: 18px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .sep-table {
+    min-width: 740px;
+  }
+
+  /* Acompanhamento: detalhe */
+  .trk-hero {
+    padding: 16px;
+    border-radius: 18px;
+  }
+
+  .trk-project {
+    margin-bottom: 16px;
+  }
+
+  .trk-stage-grid {
+    display: flex !important;
+    gap: 9px;
+    padding-bottom: 5px;
+  }
+
+  .trk-stage {
+    flex: 0 0 190px !important;
+    padding: 11px;
+  }
+
+  .trk-donut {
+    flex-basis: 58px;
+    width: 58px;
+    height: 58px;
+  }
+
+  .trk-summary {
+    gap: 9px;
+  }
+
+  .trk-metric {
+    padding: 13px;
+  }
+
+  .trk-metric strong {
+    font-size: 18px;
+  }
+
+  .trk-progress-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .trk-toolbar {
+    padding: 11px;
+  }
+
+  .trk-search {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .trk-table {
+    min-width: 740px;
+  }
+
+  /* Calendário */
+  .cal-hero {
+    gap: 13px;
+    padding: 16px;
+  }
+
+  .cal-view-toggle {
+    width: 100%;
+  }
+
+  .cal-view-toggle button {
+    flex: 1;
+  }
+
+  .cal-controls {
+    grid-template-columns: 1fr !important;
+    gap: 8px;
+  }
+
+  .cal-board-head {
+    gap: 11px;
+    padding: 13px;
+  }
+
+  .cal-period {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .cal-nav {
+    width: 100%;
+  }
+
+  .cal-day {
+    min-height: 70px !important;
+    padding: 4px;
+  }
+
+  .cal-day-number {
+    width: 21px;
+    height: 21px;
+    font-size: 10px;
+  }
+
+  .cal-day-count {
+    font-size: 8px;
+  }
+
+  .cal-events {
+    display: flex;
+    gap: 3px;
+    flex-wrap: wrap;
+  }
+
+  .cal-chip {
+    width: 7px;
+    height: 7px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    font-size: 0;
+  }
+
+  .cal-more {
+    width: 100%;
+    padding: 0;
+    font-size: 8px;
+  }
+
+  .cal-undated {
+    padding: 12px;
+  }
+
+  .cal-undated-card {
+    flex-basis: min(250px, 78vw);
+  }
+
+  .cal-drawer {
+    width: 100vw;
+  }
+
+  .cal-drawer-head {
+    padding-top: max(18px, env(safe-area-inset-top));
+  }
+
+  /* PWA */
+  .pwa-install-banner {
+    gap: 10px !important;
+    padding: 12px !important;
+  }
+
+  .pwa-install-actions {
+    padding-left: 0 !important;
+  }
+}
+
+@media (max-width: 440px) {
+  .kpi-grid,
+  .gr-kpis,
+  .cal-kpis,
+  .sep-detail-summary,
+  .trk-summary {
+    grid-template-columns: 1fr !important;
+  }
+
+  .topbar-actions {
+    flex-basis: 116px;
+    max-width: 116px;
+  }
+
+  .flow-strip,
+  .project-stats,
+  .sep-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .sep-stat:last-child:nth-child(odd) {
+    grid-column: auto;
+  }
+
+  .cal-weekdays span {
+    font-size: 7px;
+    letter-spacing: 0;
+  }
+
+  .cal-day {
+    min-height: 62px !important;
+  }
+
+  .cal-day-count {
+    display: none;
+  }
+}
