@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" role="img" aria-label="ObraFlow">
+  <rect width="192" height="192" rx="42" fill="#0f766e"/>
+  <path d="M44 61 96 32l52 29v70l-52 29-52-29Z" fill="#ffffff" opacity=".12"/>
+  <path d="M63 67h66v58H63z" fill="none" stroke="#ffffff" stroke-width="9" stroke-linejoin="round"/>
+  <path d="M78 67V52h36v15M82 91h28M82 108h18" fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="119" cy="108" r="7" fill="#ffffff"/>
+  <text x="96" y="151" fill="#ffffff" font-family="Arial, sans-serif" font-size="25" font-weight="700" text-anchor="middle">OF</text>
+</svg>
