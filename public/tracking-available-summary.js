@@ -2,10 +2,9 @@ import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebase
 import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
 import {
   allocation,
-  availableQty,
   clamp,
-  quantityNumber,
-  receivedPurchaseQty
+  purchaseCommitted,
+  quantityNumber
 } from './material-flow.js?v=20260803-1648';
 
 const firebaseConfig = {
@@ -20,13 +19,13 @@ const firebaseConfig = {
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const db = getDatabase(app);
-const $ = (selector, root = document) => root?.querySelector?.(selector) || null;
-const $$ = (selector, root = document) => root?.querySelectorAll ? [...root.querySelectorAll(selector)] : [];
+const $ = (selector, root = document) => root.querySelector(selector);
 
 let projectId = '';
 let materials = [];
 let requestVersion = 0;
 let patchQueued = false;
+let lastSignature = '';
 
 function currentRoute() {
   return location.hash.replace(/^#/, '') || 'dashboard';
@@ -36,147 +35,133 @@ function formatQuantity(value) {
   return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(value || 0);
 }
 
-function formatDate(value) {
-  if (!value) return '—';
-  const date = typeof value === 'number' ? new Date(value) : new Date(`${value}T12:00:00`);
-  return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat('pt-BR').format(date);
-}
+function quantitySummary() {
+  let totalRequiredQty = 0;
+  let availableQty = 0;
+  let stockPendingItems = 0;
+  let purchasedItems = 0;
+  let receivedPurchaseItems = 0;
 
-function escapeHtml(value = '') {
-  return String(value).replace(/[&<>'"]/g, character => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-  })[character]);
-}
+  materials.forEach(material => {
+    const alloc = allocation(material);
+    const limit = alloc.required || Number.MAX_SAFE_INTEGER;
+    const received = clamp(
+      quantityNumber(material, material.qtyReceived),
+      0,
+      alloc.purchaseQty
+    );
+    const sentToPainting = clamp(
+      quantityNumber(material, material.paintingSentQty),
+      0,
+      limit
+    );
+    const returnedFromPainting = clamp(
+      quantityNumber(material, material.paintingReturnedQty),
+      0,
+      sentToPainting || Number.MAX_SAFE_INTEGER
+    );
+    const deliveredToSite = clamp(
+      quantityNumber(material, material.siteDeliveredQty),
+      0,
+      limit
+    );
+    const awayAtPainting = Math.max(0, sentToPainting - returnedFromPainting);
 
-function normalize(value = '') {
-  return String(value)
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9]+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
+    // Única alteração: quantidade separada não entra no desconto.
+    const alreadyUnavailable = awayAtPainting + deliveredToSite;
+    const stockRemaining = Math.max(0, alloc.stockQty - alreadyUnavailable);
+    const usedBeyondStock = Math.max(0, alreadyUnavailable - alloc.stockQty);
+    const purchaseRemaining = Math.max(0, received - usedBeyondStock);
 
-function availabilityForMaterial(material) {
-  const alloc = allocation(material);
-  const requiredLimit = alloc.required || Number.MAX_SAFE_INTEGER;
-  const received = receivedPurchaseQty(material);
-  const paintSent = clamp(quantityNumber(material, material.paintingSentQty), 0, requiredLimit);
-  const paintReturned = clamp(
-    quantityNumber(material, material.paintingReturnedQty),
-    0,
-    paintSent || Number.MAX_SAFE_INTEGER
-  );
-  const delivered = clamp(quantityNumber(material, material.siteDeliveredQty), 0, requiredLimit);
-  const inPainting = Math.max(0, paintSent - paintReturned);
+    totalRequiredQty += alloc.required;
+    availableQty += stockRemaining + purchaseRemaining;
 
-  // Quantidade separada em produção não é descontada.
-  const available = Math.max(0, availableQty(material) - inPainting - delivered);
+    if (stockRemaining > 0) stockPendingItems += 1;
+
+    if (alloc.purchaseQty > 0 && purchaseCommitted(material)) {
+      purchasedItems += 1;
+      if (received > 0) receivedPurchaseItems += 1;
+    }
+  });
 
   return {
-    material,
-    alloc,
-    received,
-    available
+    totalItems: materials.length,
+    totalRequiredQty,
+    availableQty,
+    stockPendingItems,
+    purchasedItems,
+    receivedPurchaseItems
   };
 }
 
-function originMeta(source) {
-  if (source === 'misto') return ['Compra + estoque', 'warn'];
-  if (source === 'estoque') return ['Estoque', 'violet'];
-  return ['Compra', 'info'];
-}
+function metric(label, value, note = '') {
+  const article = document.createElement('article');
+  article.className = 'trk-metric';
 
-function receivedDate(material) {
-  return material.receivedDate
-    || material.directPaintingDeliveredDate
-    || material.paintingReturnDate
-    || '';
-}
+  const labelElement = document.createElement('span');
+  labelElement.textContent = label;
 
-function rowHtml(row) {
-  const { material, alloc, received, available } = row;
-  const [origin, tone] = originMeta(alloc.source);
-  const description = material.description || 'Sem descrição';
-  const sub = [material.code, material.type].filter(Boolean).join(' · ') || 'Sem código';
-  const search = normalize([
-    material.code,
-    material.description,
-    material.category,
-    material.color,
-    material.dimensions,
-    origin,
-    receivedDate(material)
-  ].filter(Boolean).join(' '));
+  const strong = document.createElement('strong');
+  strong.textContent = value;
 
-  return `<tr data-tracking-row data-search="${escapeHtml(search)}">
-    <td><span class="trk-main" title="${escapeHtml(description)}">${escapeHtml(description)}</span><span class="trk-sub">${escapeHtml(sub)}</span></td>
-    <td>${escapeHtml(material.category || 'Sem categoria')}</td>
-    <td><span class="trk-pill trk-${tone}">${escapeHtml(origin)}</span></td>
-    <td class="trk-qty">${formatQuantity(alloc.stockQty)} ${escapeHtml(material.unit || 'un')}</td>
-    <td class="trk-qty">${formatQuantity(received)} ${escapeHtml(material.unit || 'un')}</td>
-    <td class="trk-qty">${formatQuantity(available)} ${escapeHtml(material.unit || 'un')}</td>
-    <td>${formatDate(receivedDate(material))}</td>
-  </tr>`;
-}
+  article.append(labelElement, strong);
 
-function applySearch() {
-  const input = $('#trackingSearch');
-  const count = $('#trackingCount');
-  const tbody = $('.trk-table tbody');
-  if (!input || !tbody) return;
+  if (note) {
+    const small = document.createElement('small');
+    small.textContent = note;
+    article.appendChild(small);
+  }
 
-  const query = normalize(input.value || '');
-  let visible = 0;
-  $$('[data-tracking-row]', tbody).forEach(row => {
-    const match = !query || String(row.dataset.search || '').includes(query);
-    row.hidden = !match;
-    if (match) visible += 1;
-  });
-
-  if (count) count.textContent = `${visible} item${visible === 1 ? '' : 's'}`;
-  const empty = $('#trackingEmpty', tbody);
-  if (empty) empty.hidden = visible !== 0;
+  return article;
 }
 
 function patch() {
   patchQueued = false;
   if (currentRoute() !== 'estoque' || !projectId) return;
-  if ($('[data-tracking-stage].active')?.dataset.trackingStage !== 'disponivel') return;
 
-  const table = $('.trk-table');
-  const tbody = $('tbody', table);
-  if (!table || !tbody) return;
+  const activeStage = $('[data-tracking-stage].active')?.dataset.trackingStage;
+  if (activeStage !== 'disponivel') return;
 
-  const rows = materials
-    .map(availabilityForMaterial)
-    .filter(row => row.available > 0)
-    .sort((a, b) => String(a.material.category || '').localeCompare(String(b.material.category || ''), 'pt-BR')
-      || String(a.material.description || '').localeCompare(String(b.material.description || ''), 'pt-BR'));
+  const summary = $('.trk-summary');
+  if (!summary) return;
 
-  const headers = $$('thead th', table);
-  if (headers[5]) headers[5].textContent = 'Quantidade disponível';
+  const data = quantitySummary();
+  const signature = [
+    data.totalItems,
+    data.totalRequiredQty,
+    data.availableQty,
+    data.stockPendingItems,
+    data.purchasedItems,
+    data.receivedPurchaseItems
+  ].join('|');
 
-  const signature = rows.map(row => [
-    row.material.id || row.material.code || row.material.description || '',
-    row.alloc.stockQty,
-    row.received,
-    row.available,
-    row.material.updatedAt || ''
-  ].join(':')).join('|');
+  if (lastSignature === signature && summary.dataset.availableSummary === signature) return;
 
-  if (tbody.dataset.companyAvailabilitySignature !== signature) {
-    tbody.dataset.companyAvailabilitySignature = signature;
-    tbody.innerHTML = `${rows.map(rowHtml).join('')}
-      <tr id="trackingEmpty" hidden><td colspan="7"><div class="trk-empty"><strong>Nenhum item encontrado</strong>Ajuste a busca ou escolha outra etapa.</div></td></tr>`;
-  }
-
-  const input = $('#trackingSearch');
-  if (input && !input.dataset.companyAvailabilityBound) {
-    input.dataset.companyAvailabilityBound = 'true';
-    input.addEventListener('input', applySearch);
-  }
-  applySearch();
+  lastSignature = signature;
+  summary.dataset.availableSummary = signature;
+  summary.style.gridTemplateColumns = 'repeat(4,minmax(0,1fr))';
+  summary.replaceChildren(
+    metric(
+      'Total de itens',
+      `${data.totalItems} itens`,
+      'materiais cadastrados na obra'
+    ),
+    metric(
+      'Itens em estoque',
+      `${data.stockPendingItems} itens`,
+      'materiais com saldo de estoque ainda não separado'
+    ),
+    metric(
+      'Recebidos das compras',
+      `${data.receivedPurchaseItems} de ${data.purchasedItems} itens`,
+      'itens comprados com recebimento registrado'
+    ),
+    metric(
+      'Quantidade conferida e ainda não separada',
+      `${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)} un`,
+      'quantidade disponível na empresa'
+    )
+  );
 }
 
 function queuePatch() {
@@ -189,6 +174,7 @@ async function loadProject(id) {
   if (!id) return;
   const version = ++requestVersion;
   projectId = id;
+  lastSignature = '';
 
   try {
     const snapshot = await get(ref(db, `materials/${id}`));
@@ -196,7 +182,7 @@ async function loadProject(id) {
     materials = Object.values(snapshot.val() || {});
     queuePatch();
   } catch (error) {
-    console.error('Falha ao carregar a tabela de materiais disponíveis:', error);
+    console.error('Falha ao calcular materiais conferidos:', error);
   }
 }
 
@@ -223,5 +209,6 @@ window.addEventListener('hashchange', () => {
     requestVersion += 1;
     projectId = '';
     materials = [];
+    lastSignature = '';
   }
 });
