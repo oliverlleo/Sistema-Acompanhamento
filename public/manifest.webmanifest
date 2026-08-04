@@ -9,6 +9,7 @@
   "orientation": "any",
   "background_color": "#f8fafc",
   "theme_color": "#0f766e",
+  "gcm_sender_id": "103953800507",
   "lang": "pt-BR",
   "categories": ["business", "productivity"],
   "icons": [
