@@ -30,10 +30,11 @@ function ensureStyle() {
   style.id = 'pwaInstallStyle';
   style.textContent = `
     .pwa-install-banner{position:fixed;z-index:10000;left:50%;bottom:max(18px,env(safe-area-inset-bottom));display:flex;align-items:center;gap:13px;width:min(520px,calc(100% - 28px));padding:14px 15px;border:1px solid rgba(15,118,110,.22);border-radius:18px;background:#fff;box-shadow:0 18px 48px rgba(15,23,42,.2);transform:translateX(-50%);color:#0f172a}
-    .pwa-install-icon{display:grid;place-items:center;flex:0 0 46px;width:46px;height:46px;border-radius:13px;background:#0f766e;color:#fff;font-size:17px;font-weight:800}
+    .pwa-install-icon{display:grid;place-items:center;flex:0 0 48px;width:48px;height:48px;border-radius:14px;overflow:hidden;background:#0f766e}
+    .pwa-install-icon img{display:block;width:100%;height:100%;object-fit:cover}
     .pwa-install-copy{min-width:0;flex:1}.pwa-install-copy strong{display:block;font-size:13px}.pwa-install-copy span{display:block;margin-top:4px;color:#64748b;font-size:11px;line-height:1.4}
     .pwa-install-actions{display:flex;align-items:center;gap:7px}.pwa-install-actions button{min-height:36px;padding:0 11px;border-radius:10px;border:1px solid #d8e0e8;background:#fff;color:#334155;font:inherit;font-size:11px;font-weight:800;cursor:pointer}.pwa-install-actions .pwa-install-primary{border-color:#0f766e;background:#0f766e;color:#fff}
-    @media(max-width:560px){.pwa-install-banner{align-items:flex-start;flex-wrap:wrap}.pwa-install-copy{padding-right:4px}.pwa-install-actions{width:100%;justify-content:flex-end;padding-left:59px}}
+    @media(max-width:560px){.pwa-install-banner{align-items:flex-start;flex-wrap:wrap}.pwa-install-copy{padding-right:4px}.pwa-install-actions{width:100%;justify-content:flex-end;padding-left:61px}}
   `;
   document.head.appendChild(style);
 }
@@ -53,7 +54,7 @@ function showBanner({ ios = false } = {}) {
   banner.setAttribute('role', 'dialog');
   banner.setAttribute('aria-label', 'Instalar ObraFlow');
   banner.innerHTML = `
-    <div class="pwa-install-icon">OF</div>
+    <div class="pwa-install-icon"><img src="./icon-192.svg?v=20260803-2255" alt="" /></div>
     <div class="pwa-install-copy">
       <strong>Adicionar ObraFlow à tela inicial</strong>
       <span>${ios
