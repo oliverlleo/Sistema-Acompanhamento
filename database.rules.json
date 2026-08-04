@@ -6,7 +6,7 @@
     "users": {
       "$uid": {
         ".write": "auth != null && (($uid === auth.uid && !data.exists() && newData.child('role').val() === 'operador' && newData.child('active').val() === true) || root.child('users').child(auth.uid).child('role').val() === 'gerente')",
-        ".validate": "newData.hasChildren(['name', 'email', 'role', 'active']) && (newData.child('role').val() === 'gerente' || newData.child('role').val() === 'compras' || newData.child('role').val() === 'almoxarifado' || newData.child('role').val() === 'producao' || newData.child('role').val() === 'operador')"
+        ".validate": "newData.hasChildren(['name', 'email', 'role', 'active']) && (newData.child('role').val() === 'gerente' || newData.child('role').val() === 'compras' || newData.child('role').val() === 'almoxarifado' || newData.child('role').val() === 'supervisor' || newData.child('role').val() === 'producao' || newData.child('role').val() === 'operador')"
       }
     },
 
