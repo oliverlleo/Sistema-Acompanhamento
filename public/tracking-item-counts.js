@@ -70,8 +70,7 @@ function stageData() {
   let inPaintingQty = 0;
   let paintingReturnedQty = 0;
   let nearestPaintingEta = '';
-  let availableItems = 0;
-  let separatedAvailableItems = 0;
+  let checkedItems = 0;
   let separatedItems = 0;
 
   materials.forEach(material => {
@@ -81,16 +80,11 @@ function stageData() {
     const separated = clamp(quantityNumber(material, material.separatedQty), 0, limit);
     const delivered = clamp(quantityNumber(material, material.siteDeliveredQty), 0, limit);
     const paintSent = clamp(quantityNumber(material, material.paintingSentQty), 0, limit);
-    const paintReturned = clamp(
-      quantityNumber(material, material.paintingReturnedQty),
-      0,
-      paintSent || Number.MAX_SAFE_INTEGER
-    );
+    const paintReturned = clamp(quantityNumber(material, material.paintingReturnedQty), 0, paintSent || Number.MAX_SAFE_INTEGER);
     const inPaint = Math.max(0, paintSent - paintReturned);
 
-    // A tela interna continua sendo calculada por ITEM.
-    // Separado produção permanece disponível; só pintura atual e envio à obra retiram o item.
-    const companyAvailable = Math.max(0, availableQty(material) - inPaint - delivered);
+    // Única alteração de regra: separado não é retirado; enviado para a obra continua fora.
+    const checkedPending = Math.max(0, availableQty(material) - inPaint - delivered);
 
     if (alloc.purchaseQty > 0) {
       purchaseItems += 1;
@@ -115,22 +109,15 @@ function stageData() {
       }
     }
 
-    if (companyAvailable > 0) {
-      availableItems += 1;
-      if (separated > 0) separatedAvailableItems += 1;
-    }
+    if (checkedPending > 0) checkedItems += 1;
     if (separated > 0) separatedItems += 1;
   });
 
   return {
     comprado: { current: purchasedItems, total: purchaseItems },
     pintura: { current: inPaintingItems, total: paintingRequiredItems },
-    disponivel: { current: availableItems, total: totalItems },
+    disponivel: { current: checkedItems, total: totalItems },
     separado: { current: separatedItems, total: totalItems },
-    totalItems,
-    availableItems,
-    unavailableItems: Math.max(0, totalItems - availableItems),
-    separatedAvailableItems,
     purchaseItems,
     purchasedItems,
     purchaseRequiredQty,
@@ -202,26 +189,6 @@ function patchSummary(activeStage, data) {
       metric('Quantidade em pintura', `${formatQty(quantityNumber(data, data.inPaintingQty))} un de ${formatQty(quantityNumber(data, data.paintingRequiredQty))} un`),
       metric('Quantidade já retornada', `${formatQty(quantityNumber(data, data.paintingReturnedQty))} un`),
       metric('Próximo retorno', formatDate(data.nearestPaintingEta))
-    );
-    return;
-  }
-
-  if (activeStage === 'disponivel') {
-    const signature = [
-      activeStage,
-      data.totalItems,
-      data.availableItems,
-      data.unavailableItems,
-      data.separatedAvailableItems
-    ].join('|');
-    if (summary.dataset.itemSummarySignature === signature) return;
-    summary.dataset.itemSummarySignature = signature;
-    summary.style.gridTemplateColumns = 'repeat(4,minmax(0,1fr))';
-    summary.replaceChildren(
-      metric('Total de itens', `${data.totalItems} itens`, 'materiais cadastrados na obra'),
-      metric('Itens disponíveis', `${data.availableItems} itens`, 'inclui os separados em produção'),
-      metric('Itens indisponíveis', `${data.unavailableItems} itens`, 'sem saldo, em pintura ou enviados para a obra'),
-      metric('Separados em produção', `${data.separatedAvailableItems} itens`, 'já incluídos nos itens disponíveis')
     );
   }
 }
