@@ -193,7 +193,7 @@ async function sendPushNotification(notification, tokenEntries, collapseKey) {
   if (Object.keys(invalidUpdates).length) await getDatabase().ref().update(invalidUpdates);
 }
 
-async function dispatchNotification(notification, idSeed) {
+async function dispatchNotification(notification, idSeed, { push = true } = {}) {
   const { activeUsers, tokens, users } = await activeUsersAndTokens();
   const actor = notification.actorId ? users[notification.actorId] : null;
   const completeNotification = {
@@ -204,7 +204,7 @@ async function dispatchNotification(notification, idSeed) {
   };
   const notificationId = safeKey(idSeed);
   await writeInternalNotification(completeNotification, activeUsers, notificationId);
-  await sendPushNotification(completeNotification, tokens, notificationId);
+  if (push) await sendPushNotification(completeNotification, tokens, notificationId);
 }
 
 exports.notifyMaterialReceipt = onValueWritten({
@@ -239,6 +239,33 @@ exports.notifyMaterialReceipt = onValueWritten({
   const actorId = after.updatedBy || '';
   const eventKey = safeKey(event.id || `${projectId}-${materialId}-${after.updatedAt || Date.now()}`);
 
+  const beforeCategory = categoryState(materialsBefore, category);
+  const afterCategory = categoryState(materialsAfter, category);
+  const beforeProject = projectState(materialsBefore);
+  const afterProject = projectState(materialsAfter);
+
+  let categoryClaimed = false;
+  let categorySignature = '';
+  let categoryKey = '';
+  if (!beforeCategory.complete && afterCategory.complete) {
+    categorySignature = signatureFor(afterCategory.items);
+    categoryKey = safeKey(category);
+    categoryClaimed = await claimOnce(
+      `notificationMilestones/${projectId}/categories/${categoryKey}`,
+      categorySignature
+    );
+  }
+
+  let projectClaimed = false;
+  let projectSignature = '';
+  if (!beforeProject.complete && afterProject.complete) {
+    projectSignature = signatureFor(afterProject.items);
+    projectClaimed = await claimOnce(
+      `notificationMilestones/${projectId}/allPurchases`,
+      projectSignature
+    );
+  }
+
   const receiptClaimed = await claimOnce(`notificationDispatch/receipts/${eventKey}`, `${oldReceived}->${newReceived}`);
   if (receiptClaimed) {
     const completed = newReceived + EPSILON >= purchaseQty;
@@ -258,53 +285,34 @@ exports.notifyMaterialReceipt = onValueWritten({
       purchaseQty,
       remainingQty: remaining,
       unit
-    }, `receipt-${eventKey}`);
+    }, `receipt-${eventKey}`, { push: !categoryClaimed && !projectClaimed });
   }
 
-  const beforeCategory = categoryState(materialsBefore, category);
-  const afterCategory = categoryState(materialsAfter, category);
-  if (!beforeCategory.complete && afterCategory.complete) {
-    const signature = signatureFor(afterCategory.items);
-    const categoryKey = safeKey(category);
-    const claimed = await claimOnce(
-      `notificationMilestones/${projectId}/categories/${categoryKey}`,
-      signature
-    );
-    if (claimed) {
-      await dispatchNotification({
-        type: 'category_complete',
-        title: 'Categoria completamente recebida',
-        body: `Todos os ${afterCategory.items.length} itens de ${category} foram recebidos.`,
-        projectId,
-        projectName,
-        materialId,
-        category,
-        actorId,
-        itemCount: afterCategory.items.length
-      }, `category-${projectId}-${categoryKey}-${signature}`);
-    }
+  if (categoryClaimed) {
+    await dispatchNotification({
+      type: 'category_complete',
+      title: 'Categoria completamente recebida',
+      body: `Todos os ${afterCategory.items.length} itens de ${category} foram recebidos.`,
+      projectId,
+      projectName,
+      materialId,
+      category,
+      actorId,
+      itemCount: afterCategory.items.length
+    }, `category-${projectId}-${categoryKey}-${categorySignature}`, { push: !projectClaimed });
   }
 
-  const beforeProject = projectState(materialsBefore);
-  const afterProject = projectState(materialsAfter);
-  if (!beforeProject.complete && afterProject.complete) {
-    const signature = signatureFor(afterProject.items);
-    const claimed = await claimOnce(
-      `notificationMilestones/${projectId}/allPurchases`,
-      signature
-    );
-    if (claimed) {
-      await dispatchNotification({
-        type: 'project_receipts_complete',
-        title: 'Todos os materiais comprados foram recebidos',
-        body: `${projectName}: os ${afterProject.items.length} itens de compra estão completamente recebidos.`,
-        projectId,
-        projectName,
-        materialId,
-        category,
-        actorId,
-        itemCount: afterProject.items.length
-      }, `project-${projectId}-${signature}`);
-    }
+  if (projectClaimed) {
+    await dispatchNotification({
+      type: 'project_receipts_complete',
+      title: 'Todos os materiais comprados foram recebidos',
+      body: `${projectName}: os ${afterProject.items.length} itens de compra estão completamente recebidos.`,
+      projectId,
+      projectName,
+      materialId,
+      category,
+      actorId,
+      itemCount: afterProject.items.length
+    }, `project-${projectId}-${projectSignature}`);
   }
 });
