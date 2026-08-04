@@ -18,13 +18,15 @@ function patchAvailableName() {
   const stageLabel = stage?.querySelector('.trk-stage-copy strong');
   if (stageLabel && stageLabel.textContent !== 'Disponível') stageLabel.textContent = 'Disponível';
 
+  if (stage) {
+    const subtitle = document.querySelector('#pageSubtitle');
+    if (subtitle && subtitle.textContent !== 'Compras, pintura, disponibilidade e separação por obra') {
+      subtitle.textContent = 'Compras, pintura, disponibilidade e separação por obra';
+    }
+  }
+
   const availableActive = stage?.classList.contains('active');
   if (!availableActive) return;
-
-  const subtitle = document.querySelector('#pageSubtitle');
-  if (subtitle && subtitle.textContent !== 'Compras, pintura, disponibilidade e separação por obra') {
-    subtitle.textContent = 'Compras, pintura, disponibilidade e separação por obra';
-  }
 
   const panelTitle = document.querySelector('.trk-panel-head h3');
   if (panelTitle && panelTitle.textContent !== 'Materiais disponíveis') {
