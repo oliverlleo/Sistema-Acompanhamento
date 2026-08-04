@@ -1,0 +1,10 @@
+.of-route-news {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  justify-self: stretch;
+}
+
+.of-route-copy {
+  text-align: left;
+}
