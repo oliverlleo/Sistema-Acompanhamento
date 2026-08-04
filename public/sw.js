@@ -1,4 +1,4 @@
-const CACHE_NAME = 'obraflow-shell-v20260804-1838';
+const CACHE_NAME = 'obraflow-shell-v20260804-1851';
 const APP_SHELL = [
   './',
   './index.html',
@@ -13,6 +13,7 @@ const APP_SHELL = [
   './route-features.js',
   './pwa-install.js',
   './notification-center.js',
+  './topbar-notification-position.js',
   './receipt-notification-fallback.js',
   './quantity-rounding-fix.js',
   './production-status-label.js'
