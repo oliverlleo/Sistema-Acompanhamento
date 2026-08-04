@@ -20,7 +20,7 @@
     "materials": {
       "$projectId": {
         "$materialId": {
-          ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() === true && (newData.exists() || root.child('users').child(auth.uid).child('role').val() === 'gerente')",
+          ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() === true && root.child('users').child(auth.uid).child('role').val() !== 'supervisor' && (newData.exists() || root.child('users').child(auth.uid).child('role').val() === 'gerente')",
           ".validate": "!newData.exists() || (newData.child('id').val() === $materialId && newData.child('projectId').val() === $projectId && newData.hasChildren(['description', 'qtyRequired', 'unit', 'source', 'status']))"
         }
       }
@@ -28,7 +28,7 @@
 
     "projectSummaries": {
       "$projectId": {
-        ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() === true",
+        ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() === true && root.child('users').child(auth.uid).child('role').val() !== 'supervisor'",
         ".validate": "!newData.exists() || newData.hasChildren(['total', 'pending', 'progress'])"
       }
     },
@@ -36,7 +36,7 @@
     "activities": {
       "$projectId": {
         "$activityId": {
-          ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() === true && ((!data.exists() && newData.exists()) || root.child('users').child(auth.uid).child('role').val() === 'gerente')",
+          ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() === true && root.child('users').child(auth.uid).child('role').val() !== 'supervisor' && ((!data.exists() && newData.exists()) || root.child('users').child(auth.uid).child('role').val() === 'gerente')",
           ".validate": "!newData.exists() || newData.hasChildren(['type', 'message', 'userId', 'createdAt'])"
         }
       }
