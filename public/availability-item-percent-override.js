@@ -45,6 +45,10 @@ function percentage(value, total) {
   };
 }
 
+function formatQty(value) {
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(Number(value) || 0);
+}
+
 function ensureStyle() {
   if (document.querySelector('#availabilityItemPercentStyle')) return;
   const style = document.createElement('style');
@@ -68,6 +72,27 @@ function ensureStyle() {
   document.head.appendChild(style);
 }
 
+function metric(label, value, note) {
+  return `<article class="trk-metric"><span>${label}</span><strong>${value}</strong><small>${note}</small></article>`;
+}
+
+function patchSummary(totalItems, availableItems, availableQuantity) {
+  const summary = document.querySelector('.trk-summary');
+  if (!summary) return;
+
+  const unavailableItems = Math.max(0, totalItems - availableItems);
+  const signature = `${totalItems}|${availableItems}|${availableQuantity}`;
+  if (summary.dataset.itemAvailabilitySummary === signature) return;
+
+  summary.dataset.itemAvailabilitySummary = signature;
+  summary.innerHTML = [
+    metric('Total de itens', `${totalItems} itens`, 'materiais cadastrados na obra'),
+    metric('Itens disponíveis', `${availableItems} itens`, 'inclui os separados em produção'),
+    metric('Itens indisponíveis', `${unavailableItems} itens`, 'sem saldo, na pintura ou enviados para a obra'),
+    metric('Quantidade disponível', formatQty(availableQuantity), 'informação física; não altera a porcentagem por itens')
+  ].join('');
+}
+
 function patch() {
   patchQueued = false;
   if (currentRoute() !== 'estoque' || !activeProjectId) return;
@@ -77,7 +102,9 @@ function patch() {
 
   const materials = Object.values(materialsByProject[activeProjectId] || {});
   const totalItems = materials.length;
-  const availableItems = materials.filter(material => companyAvailableQty(material) > 0).length;
+  const availableQuantities = materials.map(companyAvailableQty);
+  const availableItems = availableQuantities.filter(value => value > 0).length;
+  const availableQuantity = availableQuantities.reduce((sum, value) => sum + value, 0);
   const meta = percentage(availableItems, totalItems);
 
   ensureStyle();
@@ -96,7 +123,7 @@ function patch() {
   const progressStrong = progress?.querySelector('.trk-progress-head strong');
   const quantityText = stage.querySelector('.trk-stage-copy span')?.textContent?.trim() || '';
   const progressText = quantityText
-    ? `${meta.label} dos itens · ${quantityText}`
+    ? `${meta.label} dos itens · ${availableItems} de ${totalItems} itens · ${quantityText}`
     : `${meta.label} dos itens · ${availableItems} de ${totalItems} itens`;
 
   if (progress) {
@@ -104,6 +131,8 @@ function patch() {
     progress.style.setProperty('--item-percent-width', `${meta.visual}%`);
   }
   if (progressStrong) progressStrong.dataset.itemProgressLabel = progressText;
+
+  patchSummary(totalItems, availableItems, availableQuantity);
 }
 
 function queuePatch() {
@@ -139,9 +168,7 @@ document.addEventListener('click', event => {
     setTimeout(queuePatch, 120);
   }
 
-  if (event.target.closest?.('#trackingBack')) {
-    activeProjectId = '';
-  }
+  if (event.target.closest?.('#trackingBack')) activeProjectId = '';
 }, true);
 
 document.addEventListener('keydown', event => {
