@@ -2,8 +2,10 @@ import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebase
 import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
 import {
   allocation,
+  availableQty,
   clamp,
-  quantityNumber
+  quantityNumber,
+  receivedPurchaseQty
 } from './material-flow.js?v=20260803-1648';
 
 const firebaseConfig = {
@@ -25,7 +27,6 @@ let projectId = '';
 let materials = [];
 let requestVersion = 0;
 let patchQueued = false;
-let lastSignature = '';
 
 function currentRoute() {
   return location.hash.replace(/^#/, '') || 'dashboard';
@@ -59,135 +60,25 @@ function normalize(value = '') {
 function availabilityForMaterial(material) {
   const alloc = allocation(material);
   const requiredLimit = alloc.required || Number.MAX_SAFE_INTEGER;
-  const received = clamp(
-    quantityNumber(material, material.qtyReceived),
-    0,
-    alloc.purchaseQty
-  );
-  const sourceAvailable = clamp(
-    alloc.stockQty + received,
-    0,
-    requiredLimit
-  );
-  const stockAvailable = Math.min(alloc.stockQty, sourceAvailable);
-  const receivedAvailable = Math.max(0, sourceAvailable - stockAvailable);
-  const sentToPainting = clamp(
-    quantityNumber(material, material.paintingSentQty),
-    0,
-    requiredLimit
-  );
-  const returnedFromPainting = clamp(
+  const received = receivedPurchaseQty(material);
+  const paintSent = clamp(quantityNumber(material, material.paintingSentQty), 0, requiredLimit);
+  const paintReturned = clamp(
     quantityNumber(material, material.paintingReturnedQty),
     0,
-    sentToPainting || Number.MAX_SAFE_INTEGER
+    paintSent || Number.MAX_SAFE_INTEGER
   );
-  const deliveredToSite = clamp(
-    quantityNumber(material, material.siteDeliveredQty),
-    0,
-    requiredLimit
-  );
-  const awayAtPainting = Math.max(0, sentToPainting - returnedFromPainting);
+  const delivered = clamp(quantityNumber(material, material.siteDeliveredQty), 0, requiredLimit);
+  const inPainting = Math.max(0, paintSent - paintReturned);
 
-  // Separado em produção continua dentro da empresa e não é descontado.
-  const available = Math.max(0, sourceAvailable - awayAtPainting - deliveredToSite);
+  // Quantidade separada em produção não é descontada.
+  const available = Math.max(0, availableQty(material) - inPainting - delivered);
 
   return {
     material,
     alloc,
-    stockAvailable,
-    receivedAvailable,
-    awayAtPainting,
-    deliveredToSite,
+    received,
     available
   };
-}
-
-function quantitySummary() {
-  let totalRequiredQty = 0;
-  let stockAvailableQty = 0;
-  let receivedAvailableQty = 0;
-  let awayAtPaintingQty = 0;
-  let deliveredToSiteQty = 0;
-  let availableQty = 0;
-
-  const availableRows = materials.map(availabilityForMaterial);
-
-  availableRows.forEach(row => {
-    totalRequiredQty += row.alloc.required;
-    stockAvailableQty += row.stockAvailable;
-    receivedAvailableQty += row.receivedAvailable;
-    awayAtPaintingQty += row.awayAtPainting;
-    deliveredToSiteQty += row.deliveredToSite;
-    availableQty += row.available;
-  });
-
-  return {
-    totalRequiredQty,
-    stockAvailableQty,
-    receivedAvailableQty,
-    awayAtPaintingQty,
-    deliveredToSiteQty,
-    availableQty,
-    availableRows: availableRows.filter(row => row.available > 0)
-  };
-}
-
-function percentage(value, total) {
-  const exact = total > 0 ? Math.min(100, Math.max(0, (value / total) * 100)) : 0;
-  return {
-    visual: exact > 0 ? Math.max(1.2, exact) : 0,
-    label: exact > 0 && exact < 1 ? '<1%' : `${Math.round(exact)}%`
-  };
-}
-
-function metric(label, value, note = '') {
-  const article = document.createElement('article');
-  article.className = 'trk-metric';
-
-  const labelElement = document.createElement('span');
-  labelElement.textContent = label;
-
-  const strong = document.createElement('strong');
-  strong.textContent = value;
-
-  article.append(labelElement, strong);
-
-  if (note) {
-    const small = document.createElement('small');
-    small.textContent = note;
-    article.appendChild(small);
-  }
-
-  return article;
-}
-
-function setText(element, value) {
-  if (element && element.textContent !== value) element.textContent = value;
-}
-
-function patchStageAndProgress(data) {
-  const meta = percentage(data.availableQty, data.totalRequiredQty);
-  const stage = $('[data-tracking-stage="disponivel"]');
-  const donut = $('.trk-donut', stage);
-  const donutLabel = $('.trk-donut strong', stage);
-  const stageQuantity = $('.trk-stage-copy span', stage);
-  const stageText = `${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)}`;
-
-  if (donut && donut.style.getPropertyValue('--value') !== String(meta.visual)) {
-    donut.style.setProperty('--value', String(meta.visual));
-  }
-  setText(donutLabel, meta.label);
-  setText(stageQuantity, stageText);
-
-  if (!stage?.classList.contains('active')) return;
-  const progress = $('.trk-progress-card');
-  const progressStrong = $('.trk-progress-head strong', progress);
-  const progressBar = $('.trk-progress i', progress);
-  const progressText = `${meta.label} · ${stageText}`;
-  setText(progressStrong, progressText);
-  if (progressBar && progressBar.style.width !== `${meta.visual}%`) {
-    progressBar.style.width = `${meta.visual}%`;
-  }
 }
 
 function originMeta(source) {
@@ -204,7 +95,7 @@ function receivedDate(material) {
 }
 
 function rowHtml(row) {
-  const { material, alloc, receivedAvailable, available } = row;
+  const { material, alloc, received, available } = row;
   const [origin, tone] = originMeta(alloc.source);
   const description = material.description || 'Sem descrição';
   const sub = [material.code, material.type].filter(Boolean).join(' · ') || 'Sem código';
@@ -222,122 +113,70 @@ function rowHtml(row) {
     <td><span class="trk-main" title="${escapeHtml(description)}">${escapeHtml(description)}</span><span class="trk-sub">${escapeHtml(sub)}</span></td>
     <td>${escapeHtml(material.category || 'Sem categoria')}</td>
     <td><span class="trk-pill trk-${tone}">${escapeHtml(origin)}</span></td>
-    <td class="trk-qty">${formatQuantity(row.stockAvailable)} ${escapeHtml(material.unit || 'un')}</td>
-    <td class="trk-qty">${formatQuantity(receivedAvailable)} ${escapeHtml(material.unit || 'un')}</td>
+    <td class="trk-qty">${formatQuantity(alloc.stockQty)} ${escapeHtml(material.unit || 'un')}</td>
+    <td class="trk-qty">${formatQuantity(received)} ${escapeHtml(material.unit || 'un')}</td>
     <td class="trk-qty">${formatQuantity(available)} ${escapeHtml(material.unit || 'un')}</td>
     <td>${formatDate(receivedDate(material))}</td>
   </tr>`;
 }
 
-function applyAvailableSearch() {
+function applySearch() {
   const input = $('#trackingSearch');
   const count = $('#trackingCount');
   const tbody = $('.trk-table tbody');
   if (!input || !tbody) return;
 
   const query = normalize(input.value || '');
-  const rows = $$('[data-tracking-row]', tbody);
   let visible = 0;
-
-  rows.forEach(row => {
+  $$('[data-tracking-row]', tbody).forEach(row => {
     const match = !query || String(row.dataset.search || '').includes(query);
     row.hidden = !match;
     if (match) visible += 1;
   });
 
-  setText(count, `${visible} item${visible === 1 ? '' : 's'}`);
+  if (count) count.textContent = `${visible} item${visible === 1 ? '' : 's'}`;
   const empty = $('#trackingEmpty', tbody);
   if (empty) empty.hidden = visible !== 0;
 }
 
-function patchAvailableRows(data) {
+function patch() {
+  patchQueued = false;
+  if (currentRoute() !== 'estoque' || !projectId) return;
+  if ($('[data-tracking-stage].active')?.dataset.trackingStage !== 'disponivel') return;
+
   const table = $('.trk-table');
   const tbody = $('tbody', table);
   if (!table || !tbody) return;
 
+  const rows = materials
+    .map(availabilityForMaterial)
+    .filter(row => row.available > 0)
+    .sort((a, b) => String(a.material.category || '').localeCompare(String(b.material.category || ''), 'pt-BR')
+      || String(a.material.description || '').localeCompare(String(b.material.description || ''), 'pt-BR'));
+
   const headers = $$('thead th', table);
-  setText(headers[3], 'Quantidade de estoque');
-  setText(headers[4], 'Quantidade recebida');
-  setText(headers[5], 'Quantidade disponível');
+  if (headers[5]) headers[5].textContent = 'Quantidade disponível';
 
-  const rowsSignature = data.availableRows
-    .map(row => [
-      row.material.id || row.material.code || row.material.description || '',
-      row.stockAvailable,
-      row.receivedAvailable,
-      row.available,
-      row.material.updatedAt || ''
-    ].join(':'))
-    .join('|');
+  const signature = rows.map(row => [
+    row.material.id || row.material.code || row.material.description || '',
+    row.alloc.stockQty,
+    row.received,
+    row.available,
+    row.material.updatedAt || ''
+  ].join(':')).join('|');
 
-  if (tbody.dataset.companyAvailabilitySignature !== rowsSignature) {
-    tbody.dataset.companyAvailabilitySignature = rowsSignature;
-    tbody.innerHTML = `${data.availableRows
-      .sort((a, b) => String(a.material.category || '').localeCompare(String(b.material.category || ''), 'pt-BR')
-        || String(a.material.description || '').localeCompare(String(b.material.description || ''), 'pt-BR'))
-      .map(rowHtml).join('')}
+  if (tbody.dataset.companyAvailabilitySignature !== signature) {
+    tbody.dataset.companyAvailabilitySignature = signature;
+    tbody.innerHTML = `${rows.map(rowHtml).join('')}
       <tr id="trackingEmpty" hidden><td colspan="7"><div class="trk-empty"><strong>Nenhum item encontrado</strong>Ajuste a busca ou escolha outra etapa.</div></td></tr>`;
   }
 
   const input = $('#trackingSearch');
   if (input && !input.dataset.companyAvailabilityBound) {
     input.dataset.companyAvailabilityBound = 'true';
-    input.addEventListener('input', applyAvailableSearch);
+    input.addEventListener('input', applySearch);
   }
-  applyAvailableSearch();
-}
-
-function patch() {
-  patchQueued = false;
-  if (currentRoute() !== 'estoque' || !projectId) return;
-
-  const data = quantitySummary();
-  patchStageAndProgress(data);
-
-  const activeStage = $('[data-tracking-stage].active')?.dataset.trackingStage;
-  if (activeStage !== 'disponivel') return;
-
-  const summary = $('.trk-summary');
-  if (!summary) return;
-
-  const signature = [
-    data.totalRequiredQty,
-    data.stockAvailableQty,
-    data.receivedAvailableQty,
-    data.awayAtPaintingQty,
-    data.deliveredToSiteQty,
-    data.availableQty
-  ].join('|');
-
-  if (lastSignature !== signature || summary.dataset.availableSummary !== signature) {
-    lastSignature = signature;
-    summary.dataset.availableSummary = signature;
-    summary.style.gridTemplateColumns = 'repeat(4,minmax(0,1fr))';
-    summary.replaceChildren(
-      metric(
-        'Quantidade de estoque',
-        formatQuantity(data.stockAvailableQty),
-        'quantidade disponível com origem em estoque'
-      ),
-      metric(
-        'Quantidade recebida',
-        formatQuantity(data.receivedAvailableQty),
-        'quantidade recebida das compras'
-      ),
-      metric(
-        'Quantidade fora da empresa',
-        formatQuantity(data.awayAtPaintingQty + data.deliveredToSiteQty),
-        `${formatQuantity(data.awayAtPaintingQty)} em pintura · ${formatQuantity(data.deliveredToSiteQty)} enviados para obra`
-      ),
-      metric(
-        'Quantidade disponível',
-        `${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)}`,
-        'inclui o que está separado em produção'
-      )
-    );
-  }
-
-  patchAvailableRows(data);
+  applySearch();
 }
 
 function queuePatch() {
@@ -350,7 +189,6 @@ async function loadProject(id) {
   if (!id) return;
   const version = ++requestVersion;
   projectId = id;
-  lastSignature = '';
 
   try {
     const snapshot = await get(ref(db, `materials/${id}`));
@@ -358,7 +196,7 @@ async function loadProject(id) {
     materials = Object.values(snapshot.val() || {});
     queuePatch();
   } catch (error) {
-    console.error('Falha ao calcular as quantidades disponíveis:', error);
+    console.error('Falha ao carregar a tabela de materiais disponíveis:', error);
   }
 }
 
@@ -385,6 +223,5 @@ window.addEventListener('hashchange', () => {
     requestVersion += 1;
     projectId = '';
     materials = [];
-    lastSignature = '';
   }
 });
