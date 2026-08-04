@@ -38,84 +38,42 @@ function availabilityForProject(projectId) {
   const materials = Object.values(materialsByProject[projectId] || {});
   let requiredQuantity = 0;
   let availableQuantity = 0;
-  let availableItems = 0;
 
   materials.forEach(material => {
     const alloc = allocation(material);
-    const available = availableQty(material);
-
     requiredQuantity += alloc.required;
-    availableQuantity += available;
-    if (alloc.required > 0 && available > 0) availableItems += 1;
+    availableQuantity += availableQty(material);
   });
 
   return {
     requiredQuantity,
     availableQuantity,
-    totalItems: materials.length,
-    availableItems,
-    quantityPercent: percentage(availableQuantity, requiredQuantity),
-    itemPercent: percentage(availableItems, materials.length)
+    quantityPercent: percentage(availableQuantity, requiredQuantity)
   };
 }
 
-function ensureStyle() {
-  if (document.querySelector('#trackingCardAvailabilityStyle')) return;
+function normalizeIndicator(card) {
+  const head = card.querySelector('.sep-card-head');
+  if (!head) return null;
 
-  const style = document.createElement('style');
-  style.id = 'trackingCardAvailabilityStyle';
-  style.textContent = `
-    .sep-availability-block{display:grid;justify-items:center;gap:6px;flex:0 0 auto}
-    .sep-availability-title{color:#64748b;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
-    .sep-card-availability-pair{display:flex;align-items:center;gap:7px}
-    .sep-card-availability-pair .sep-donut{--size:72px!important;flex-basis:var(--size)}
-    .sep-card-availability-pair .sep-donut::after{inset:7px}
-    .sep-card-availability-pair .sep-donut-label strong{font-size:16px}
-    .sep-card-availability-pair .sep-donut-label small{margin-top:4px;font-size:7px;letter-spacing:.045em}
-    .sep-card-availability-pair .sep-donut-items{background:conic-gradient(#0ea5e9 calc(var(--value)*1%),#e8eef3 0)}
-    @media(max-width:720px){
-      .sep-card-availability-pair{gap:5px}
-      .sep-card-availability-pair .sep-donut{--size:64px!important}
-      .sep-card-availability-pair .sep-donut-label strong{font-size:14px}
-    }
-  `;
-  document.head.appendChild(style);
-}
-
-function ensureIndicators(card) {
-  let block = card.querySelector('.sep-availability-block');
-
-  if (!block) {
-    const head = card.querySelector('.sep-card-head');
-    const originalDonut = head?.querySelector(':scope > .sep-donut');
-    if (!head || !originalDonut) return null;
-
-    block = document.createElement('div');
-    block.className = 'sep-availability-block';
-    block.innerHTML = '<span class="sep-availability-title">Disponível</span><div class="sep-card-availability-pair"></div>';
-
-    const pair = block.querySelector('.sep-card-availability-pair');
-    originalDonut.replaceWith(block);
-    originalDonut.classList.add('sep-donut-quantity');
-    originalDonut.style.setProperty('--size', '72px');
-    pair.appendChild(originalDonut);
-
-    const itemDonut = document.createElement('div');
-    itemDonut.className = 'sep-donut sep-donut-items';
-    itemDonut.style.setProperty('--value', '0');
-    itemDonut.style.setProperty('--size', '72px');
-    itemDonut.innerHTML = '<div class="sep-donut-label"><strong>0%</strong><small>itens</small></div>';
-    pair.appendChild(itemDonut);
+  const oldBlock = head.querySelector(':scope > .sep-availability-block');
+  if (oldBlock) {
+    const quantityDonut = oldBlock.querySelector('.sep-donut-quantity')
+      || oldBlock.querySelector('.sep-donut');
+    if (!quantityDonut) return null;
+    oldBlock.replaceWith(quantityDonut);
   }
 
-  const quantityDonut = block.querySelector('.sep-donut-quantity');
-  const itemDonut = block.querySelector('.sep-donut-items');
-  if (!quantityDonut || !itemDonut) return null;
+  const donut = head.querySelector(':scope > .sep-donut');
+  if (!donut) return null;
 
-  return { quantityDonut, itemDonut };
+  donut.classList.add('sep-donut-quantity');
+  donut.classList.remove('sep-donut-items');
+  donut.style.removeProperty('--size');
+  return donut;
 }
 
-function updateDonut(donut, meta, smallLabel, ariaLabel) {
+function updateDonut(donut, meta, ariaLabel) {
   if (donut.style.getPropertyValue('--value') !== String(meta.visual)) {
     donut.style.setProperty('--value', String(meta.visual));
   }
@@ -123,7 +81,7 @@ function updateDonut(donut, meta, smallLabel, ariaLabel) {
   const strong = donut.querySelector('.sep-donut-label strong');
   const small = donut.querySelector('.sep-donut-label small');
   if (strong && strong.textContent !== meta.label) strong.textContent = meta.label;
-  if (small && small.textContent !== smallLabel) small.textContent = smallLabel;
+  if (small && small.textContent !== 'disponibilidade') small.textContent = 'disponibilidade';
   if (donut.getAttribute('aria-label') !== ariaLabel) donut.setAttribute('aria-label', ariaLabel);
 }
 
@@ -131,29 +89,18 @@ function patchCards() {
   patchQueued = false;
   if (currentRoute() !== 'estoque') return;
 
-  ensureStyle();
-
   document.querySelectorAll('[data-separated-project]').forEach(card => {
     const projectId = card.dataset.separatedProject || '';
     if (!projectId) return;
 
-    const indicators = ensureIndicators(card);
-    if (!indicators) return;
+    const donut = normalizeIndicator(card);
+    if (!donut) return;
 
     const data = availabilityForProject(projectId);
-
     updateDonut(
-      indicators.quantityDonut,
+      donut,
       data.quantityPercent,
-      'quantidade',
-      `${data.quantityPercent.label} disponível por quantidade: estoque e compras recebidas`
-    );
-
-    updateDonut(
-      indicators.itemDonut,
-      data.itemPercent,
-      'itens',
-      `${data.itemPercent.label} disponível por itens: ${data.availableItems} de ${data.totalItems} materiais`
+      `${data.quantityPercent.label} de disponibilidade por quantidade: estoque e compras recebidas`
     );
   });
 }
