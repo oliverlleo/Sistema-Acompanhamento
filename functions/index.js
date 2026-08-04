@@ -77,6 +77,11 @@ function materialCategory(material = {}) {
   return String(material.category || 'Sem categoria').trim() || 'Sem categoria';
 }
 
+function projectNotificationLabel(projectName = 'Obra', clientName = '') {
+  const client = String(clientName).trim();
+  return client ? `Cliente: ${client} · Obra: ${projectName}` : `Obra: ${projectName}`;
+}
+
 function purchaseMaterials(materials = {}) {
   return Object.entries(materials)
     .map(([id, material]) => ({ id, material, purchaseQty: allocation(material).purchaseQty }))
@@ -166,6 +171,7 @@ async function sendPushNotification(notification, tokenEntries, collapseKey) {
         body: String(notification.body || ''),
         projectId: String(notification.projectId || ''),
         projectName: String(notification.projectName || ''),
+        clientName: String(notification.clientName || ''),
         materialId: String(notification.materialId || ''),
         category: String(notification.category || ''),
         url: String(notification.url || './#estoque')
@@ -232,6 +238,8 @@ exports.notifyMaterialReceipt = onValueWritten({
   const materialsAfter = materialsSnapshot.val() || {};
   const materialsBefore = { ...materialsAfter, [materialId]: before };
   const projectName = project.name || project.code || 'Obra';
+  const clientName = String(project.client || '').trim();
+  const projectLabel = projectNotificationLabel(projectName, clientName);
   const description = after.description || after.code || 'Material';
   const unit = after.unit || 'un';
   const category = materialCategory(after);
@@ -273,10 +281,11 @@ exports.notifyMaterialReceipt = onValueWritten({
       type: completed ? 'receipt_complete' : 'receipt_partial',
       title: completed ? 'Item completamente recebido' : 'Recebimento parcial',
       body: completed
-        ? `${description}: ${formatQuantity(newReceived)} de ${formatQuantity(purchaseQty)} ${unit} recebidos.`
-        : `${description}: ${formatQuantity(newReceived)} de ${formatQuantity(purchaseQty)} ${unit} recebidos. Faltam ${formatQuantity(remaining)} ${unit}.`,
+        ? `${projectLabel}\n${description}: ${formatQuantity(newReceived)} de ${formatQuantity(purchaseQty)} ${unit} recebidos.`
+        : `${projectLabel}\n${description}: ${formatQuantity(newReceived)} de ${formatQuantity(purchaseQty)} ${unit} recebidos. Faltam ${formatQuantity(remaining)} ${unit}.`,
       projectId,
       projectName,
+      clientName,
       materialId,
       materialDescription: description,
       category,
@@ -292,9 +301,10 @@ exports.notifyMaterialReceipt = onValueWritten({
     await dispatchNotification({
       type: 'category_complete',
       title: 'Categoria completamente recebida',
-      body: `Todos os ${afterCategory.items.length} itens de ${category} foram recebidos.`,
+      body: `${projectLabel}\nTodos os ${afterCategory.items.length} itens de ${category} foram recebidos.`,
       projectId,
       projectName,
+      clientName,
       materialId,
       category,
       actorId,
@@ -309,6 +319,7 @@ exports.notifyMaterialReceipt = onValueWritten({
       body: `${projectName}: os ${afterProject.items.length} itens de compra estão completamente recebidos.`,
       projectId,
       projectName,
+      clientName,
       materialId,
       category,
       actorId,

@@ -355,7 +355,18 @@ async function registerMessaging() {
   const messaging = getMessaging(app);
   const options = { serviceWorkerRegistration: registration };
   if (VAPID_KEY) options.vapidKey = VAPID_KEY;
-  const token = await getToken(messaging, options);
+  let token;
+  try {
+    token = await getToken(messaging, options);
+  } catch (error) {
+    const message = String(error?.message || '').toLowerCase();
+    if (!VAPID_KEY || !message.includes('push service error')) throw error;
+
+    // An incomplete subscription cannot be reused with a different VAPID key.
+    const subscription = await registration.pushManager.getSubscription();
+    await subscription?.unsubscribe();
+    token = await getToken(messaging, { serviceWorkerRegistration: registration });
+  }
   if (!token) throw new Error('O navegador não devolveu um token de notificação.');
   await set(ref(db, `pushTokens/${user.uid}/${deviceId()}`), {
     token,
