@@ -3,7 +3,8 @@ import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/12.16.
 import {
   allocation,
   purchaseCommitted,
-  availableQty
+  availableQty,
+  quantityNumber
 } from './material-flow.js?v=20260803-1648';
 
 const firebaseConfig = {
@@ -46,6 +47,15 @@ function percent(value, total) {
   };
 }
 
+function companyAvailableQty(material) {
+  const baseAvailable = availableQty(material);
+  const sentToPainting = Math.max(0, quantityNumber(material, material.paintingSentQty));
+  const returnedFromPainting = Math.max(0, quantityNumber(material, material.paintingReturnedQty));
+  const awayAtPainting = Math.max(0, sentToPainting - returnedFromPainting);
+  const deliveredToSite = Math.max(0, quantityNumber(material, material.siteDeliveredQty));
+  return Math.max(0, baseAvailable - awayAtPainting - deliveredToSite);
+}
+
 function categoryData(stage) {
   const categories = new Map();
 
@@ -61,7 +71,7 @@ function categoryData(stage) {
     } else if (stage === 'disponivel') {
       if (!(alloc.required > 0)) return;
       current.total += alloc.required;
-      current.value += Math.min(availableQty(material), alloc.required);
+      current.value += Math.min(companyAvailableQty(material), alloc.required);
     } else {
       return;
     }
@@ -110,7 +120,7 @@ function patchCategories() {
     section.dataset.trackingCategoryProgress = 'true';
   }
 
-  const action = activeStage === 'comprado' ? 'comprados' : 'conferidos';
+  const action = activeStage === 'comprado' ? 'comprados' : 'disponíveis na empresa';
   section.dataset.signature = signature;
   section.innerHTML = categories.map(category => `
     <article class="trk-category" title="${escapeHtml(category.name)}">
