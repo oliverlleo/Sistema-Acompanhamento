@@ -47,6 +47,38 @@
         ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() === true && (root.child('users').child(auth.uid).child('role').val() === 'gerente' || root.child('users').child(auth.uid).child('role').val() === 'almoxarifado') && (newData.exists() || root.child('users').child(auth.uid).child('role').val() === 'gerente')",
         ".validate": "!newData.exists() || newData.hasChildren(['id', 'description', 'qtyAvailable', 'unit'])"
       }
+    },
+
+    "notifications": {
+      "$uid": {
+        ".write": false
+      }
+    },
+
+    "notificationReads": {
+      "$uid": {
+        "$notificationId": {
+          ".write": "auth != null && auth.uid === $uid && root.child('users').child(auth.uid).child('active').val() === true",
+          ".validate": "!newData.exists() || newData.isNumber()"
+        }
+      }
+    },
+
+    "pushTokens": {
+      "$uid": {
+        "$deviceId": {
+          ".write": "auth != null && auth.uid === $uid && root.child('users').child(auth.uid).child('active').val() === true",
+          ".validate": "!newData.exists() || (newData.hasChildren(['token', 'enabled', 'updatedAt']) && newData.child('token').isString() && newData.child('enabled').isBoolean() && newData.child('updatedAt').isNumber())"
+        }
+      }
+    },
+
+    "notificationDispatch": {
+      ".write": false
+    },
+
+    "notificationMilestones": {
+      ".write": false
     }
   }
 }
