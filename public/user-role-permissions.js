@@ -27,7 +27,7 @@ const db = getDatabase(app);
 
 const ROLE_ROUTES = {
   almoxarifado: new Set(['recebimento', 'pintura', 'separacao', 'calendario']),
-  supervisor: new Set(['calendario', 'estoque'])
+  supervisor: new Set(['recebimento', 'calendario', 'estoque'])
 };
 
 const DEFAULT_ROUTE = {
@@ -48,7 +48,7 @@ const roleDescriptions = {
   gerente: 'Acesso completo ao sistema, usuários, obras e todas as operações.',
   compras: 'Perfil de compras e gerenciamento de obras permitido pelo sistema.',
   almoxarifado: 'Acesso somente a Recebimento, Pintura, Separação e Calendário.',
-  supervisor: 'Acesso somente a Calendário e Acompanhamento.',
+  supervisor: 'Acesso a Calendário, Acompanhamento e Recebimento somente para visualização.',
   producao: 'Perfil de produção conforme as permissões operacionais atuais.',
   operador: 'Perfil operacional padrão do sistema.'
 };
@@ -69,6 +69,10 @@ function currentRoute() {
 
 function isManager() {
   return profile?.role === 'gerente';
+}
+
+function isSupervisor() {
+  return profile?.role === 'supervisor';
 }
 
 function restrictedRoutes() {
@@ -137,7 +141,12 @@ function rememberAndHide(element, shouldHide, prefix) {
 function updateNavigationLabels() {
   const nav = document.querySelector('#mainNav');
   const allowed = restrictedRoutes();
-  if (!nav || !allowed) return;
+  if (!nav) return;
+
+  if (!allowed) {
+    nav.querySelectorAll('.nav-label').forEach(label => rememberAndHide(label, false, 'restrictedLabel'));
+    return;
+  }
 
   const children = [...nav.children];
   children.forEach((child, index) => {
@@ -179,9 +188,7 @@ function updateNavigationVisibility() {
     || (profile?.role === 'almoxarifado' && ['recebimento', 'calendario'].includes(route));
   rememberAndHide(projectWrap, hideProject, 'restrictedProject');
 
-  if (allowed) updateNavigationLabels();
-  else document.querySelectorAll('#mainNav .nav-label').forEach(label => rememberAndHide(label, false, 'restrictedLabel'));
-
+  updateNavigationLabels();
   updateSidebarRole();
 }
 
@@ -221,6 +228,67 @@ function enforceCurrentRoute() {
 
   if (!allowed.has(currentRoute())) navigateToFallback();
   else updateNavigationVisibility();
+}
+
+function ensureSupervisorReadonlyStyle() {
+  if (document.querySelector('#supervisorReadonlyStyle')) return;
+  const style = document.createElement('style');
+  style.id = 'supervisorReadonlyStyle';
+  style.textContent = `
+    .supervisor-readonly-note{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 15px;border:1px solid rgba(15,118,110,.22);border-radius:14px;background:#f0fdfa;color:#134e4a;font-size:12px}
+    .supervisor-readonly-note strong{display:block;color:#0f172a;font-size:12px}.supervisor-readonly-note span{display:block;margin-top:3px;color:#64748b;font-size:10px}
+    #globalReceivingRoot [data-global-receive][disabled]{cursor:not-allowed;opacity:.66;background:#f1f5f9;color:#64748b;border-color:#d8e0e8}
+  `;
+  document.head.appendChild(style);
+}
+
+function restoreReceivingButton(button) {
+  if (!button.dataset.supervisorReadonly) return;
+  button.textContent = button.dataset.supervisorOriginalLabel || button.textContent;
+  button.disabled = button.dataset.supervisorPreviousDisabled === '1';
+  button.removeAttribute('aria-disabled');
+  button.removeAttribute('title');
+  delete button.dataset.supervisorReadonly;
+  delete button.dataset.supervisorOriginalLabel;
+  delete button.dataset.supervisorPreviousDisabled;
+}
+
+function applySupervisorReceivingReadonly() {
+  const readonly = isSupervisor() && currentRoute() === 'recebimento';
+  const root = document.querySelector('#globalReceivingRoot');
+
+  if (readonly && root) {
+    ensureSupervisorReadonlyStyle();
+    let note = root.querySelector('[data-supervisor-readonly-note]');
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'supervisor-readonly-note';
+      note.dataset.supervisorReadonlyNote = 'true';
+      note.innerHTML = '<div><strong>Modo somente visualização</strong><span>O Supervisor pode consultar obras, fornecedores, prazos e quantidades, mas não pode confirmar recebimentos.</span></div><span class="status-pill status-info">Supervisor</span>';
+      const filters = root.querySelector('.gr-filters');
+      if (filters) filters.insertAdjacentElement('afterend', note);
+      else root.prepend(note);
+    }
+  } else {
+    document.querySelectorAll('[data-supervisor-readonly-note]').forEach(note => note.remove());
+  }
+
+  document.querySelectorAll('#globalReceivingRoot [data-global-receive]').forEach(button => {
+    if (!readonly) {
+      restoreReceivingButton(button);
+      return;
+    }
+
+    if (!button.dataset.supervisorReadonly) {
+      button.dataset.supervisorReadonly = '1';
+      button.dataset.supervisorOriginalLabel = button.textContent || '';
+      button.dataset.supervisorPreviousDisabled = button.disabled ? '1' : '0';
+    }
+    button.disabled = true;
+    button.setAttribute('aria-disabled', 'true');
+    button.title = 'Supervisor possui acesso somente para visualização';
+    button.textContent = 'Somente visualização';
+  });
 }
 
 function ensureSupervisorOption(select) {
@@ -440,6 +508,7 @@ function injectCreateUserUi() {
 function applyUi() {
   updateNavigationVisibility();
   enforceCurrentRoute();
+  applySupervisorReceivingReadonly();
   injectCreateUserUi();
   decorateEditUserModal();
   patchUserCards();
@@ -463,6 +532,15 @@ function subscribeUsersIfManager() {
 }
 
 document.addEventListener('click', event => {
+  const receiveButton = event.target.closest?.('[data-global-receive]');
+  if (receiveButton && isSupervisor()) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    toast('O Supervisor possui acesso somente para visualização no Recebimento.', 'error');
+    return;
+  }
+
   const editButton = event.target.closest?.('[data-edit-user]');
   if (editButton) {
     editingUserId = editButton.dataset.editUser || '';
