@@ -8,6 +8,7 @@ import './tracking-card-stock-count.js?v=20260803-1633';
 import './tracking-unresolved-stage.js?v=20260803-1933';
 import './tracking-card-availability.js?v=20260804-1838';
 import './tracking-category-progress.js?v=20260804-1848';
+import './tracking-category-filter.js?v=20260804-1901';
 import './tracking-available-name.js?v=20260803-2208';
 import './materials-origin-status.js?v=20260803-1943';
 import './purchase-needs-action-filter.js?v=20260803-1958';
