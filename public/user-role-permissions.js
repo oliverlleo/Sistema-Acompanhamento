@@ -25,20 +25,41 @@ const app = getApps().find(candidate => candidate.name === '[DEFAULT]')
 const auth = getAuth(app);
 const db = getDatabase(app);
 
-const ALMOXARIFADO_ROUTES = new Set(['recebimento', 'pintura', 'separacao', 'calendario']);
-const FALLBACK_ROUTE = 'recebimento';
-const CREATOR_APP_NAME = 'obraflow-user-creator';
+const ROLE_ROUTES = {
+  almoxarifado: new Set(['recebimento', 'pintura', 'separacao', 'calendario']),
+  supervisor: new Set(['calendario', 'estoque'])
+};
+
+const DEFAULT_ROUTE = {
+  almoxarifado: 'recebimento',
+  supervisor: 'calendario'
+};
+
+const ROLE_LABELS = {
+  gerente: 'Gerente',
+  compras: 'Compras',
+  almoxarifado: 'Almoxarifado',
+  supervisor: 'Supervisor',
+  producao: 'Produção',
+  operador: 'Operador'
+};
 
 const roleDescriptions = {
   gerente: 'Acesso completo ao sistema, usuários, obras e todas as operações.',
   compras: 'Perfil de compras e gerenciamento de obras permitido pelo sistema.',
   almoxarifado: 'Acesso somente a Recebimento, Pintura, Separação e Calendário.',
+  supervisor: 'Acesso somente a Calendário e Acompanhamento.',
   producao: 'Perfil de produção conforme as permissões operacionais atuais.',
   operador: 'Perfil operacional padrão do sistema.'
 };
 
+const CREATOR_APP_NAME = 'obraflow-user-creator';
+
 let profile = null;
+let users = {};
 let stopProfile = null;
+let stopUsers = null;
+let editingUserId = '';
 let uiTimer = null;
 let navigationPending = false;
 
@@ -50,8 +71,16 @@ function isManager() {
   return profile?.role === 'gerente';
 }
 
-function isWarehouse() {
-  return profile?.role === 'almoxarifado';
+function restrictedRoutes() {
+  return ROLE_ROUTES[profile?.role] || null;
+}
+
+function defaultRoute() {
+  return DEFAULT_ROUTE[profile?.role] || 'dashboard';
+}
+
+function roleLabel(role) {
+  return ROLE_LABELS[role] || 'Operador';
 }
 
 function escapeHtml(value = '') {
@@ -76,7 +105,7 @@ function authErrorMessage(error) {
   if (code.includes('invalid-email')) return 'Informe um e-mail válido.';
   if (code.includes('weak-password')) return 'A senha precisa ter pelo menos 6 caracteres.';
   if (code.includes('operation-not-allowed')) return 'Ative o acesso por E-mail/Senha no Firebase Authentication.';
-  if (code.includes('permission-denied')) return 'A gerente não possui permissão para criar este usuário nas regras atuais.';
+  if (code.includes('permission-denied')) return 'As regras do Firebase ainda não permitem salvar esse perfil.';
   return error?.message || 'Não foi possível concluir a operação.';
 }
 
@@ -107,9 +136,10 @@ function rememberAndHide(element, shouldHide, prefix) {
 
 function updateNavigationLabels() {
   const nav = document.querySelector('#mainNav');
-  if (!nav) return;
-  const children = [...nav.children];
+  const allowed = restrictedRoutes();
+  if (!nav || !allowed) return;
 
+  const children = [...nav.children];
   children.forEach((child, index) => {
     if (!child.classList.contains('nav-label')) return;
     let hasVisibleRoute = false;
@@ -123,52 +153,65 @@ function updateNavigationLabels() {
       }
     }
 
-    rememberAndHide(child, isWarehouse() && !hasVisibleRoute, 'almoxLabel');
+    rememberAndHide(child, !hasVisibleRoute, 'restrictedLabel');
   });
 }
 
 function updateSidebarRole() {
   if (!profile) return;
   const label = document.querySelector('#sidebarUser .user-meta small');
-  if (label && isWarehouse()) label.textContent = 'Almoxarifado';
+  if (label) label.textContent = roleLabel(profile.role);
 }
 
 function updateNavigationVisibility() {
-  const warehouse = isWarehouse();
+  const allowed = restrictedRoutes();
 
   document.querySelectorAll('#mainNav [data-route]').forEach(button => {
-    const allowed = ALMOXARIFADO_ROUTES.has(button.dataset.route || '');
-    rememberAndHide(button, warehouse && !allowed, 'almoxRoute');
+    const shouldHide = Boolean(allowed) && !allowed.has(button.dataset.route || '');
+    rememberAndHide(button, shouldHide, 'restrictedRoute');
   });
 
-  rememberAndHide(document.querySelector('#quickAddBtn'), warehouse, 'almoxQuickAdd');
-  updateNavigationLabels();
+  rememberAndHide(document.querySelector('#quickAddBtn'), Boolean(allowed), 'restrictedQuickAdd');
+
+  const projectWrap = document.querySelector('.project-select-wrap');
+  const route = currentRoute();
+  const hideProject = profile?.role === 'supervisor'
+    || (profile?.role === 'almoxarifado' && ['recebimento', 'calendario'].includes(route));
+  rememberAndHide(projectWrap, hideProject, 'restrictedProject');
+
+  if (allowed) updateNavigationLabels();
+  else document.querySelectorAll('#mainNav .nav-label').forEach(label => rememberAndHide(label, false, 'restrictedLabel'));
+
   updateSidebarRole();
 }
 
 function navigateToFallback() {
-  if (!isWarehouse() || navigationPending) return;
+  const allowed = restrictedRoutes();
+  if (!allowed || navigationPending) return;
   navigationPending = true;
 
+  const route = defaultRoute();
   const finish = () => {
     navigationPending = false;
     updateNavigationVisibility();
   };
 
-  const button = document.querySelector(`#mainNav [data-route="${FALLBACK_ROUTE}"]`);
+  const button = document.querySelector(`#mainNav [data-route="${route}"]`);
   if (button) {
     button.hidden = false;
     button.click();
-    setTimeout(finish, 120);
+    setTimeout(finish, 150);
     return;
   }
 
-  history.replaceState(null, '', `#${FALLBACK_ROUTE}`);
-  setTimeout(finish, 180);
+  history.replaceState(null, '', `#${route}`);
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+  setTimeout(finish, 220);
 }
 
 function enforceCurrentRoute() {
-  if (!isWarehouse()) return;
+  const allowed = restrictedRoutes();
+  if (!allowed) return;
 
   const shell = document.querySelector('#appShell');
   if (!shell || shell.hidden) {
@@ -176,16 +219,26 @@ function enforceCurrentRoute() {
     return;
   }
 
-  if (!ALMOXARIFADO_ROUTES.has(currentRoute())) navigateToFallback();
+  if (!allowed.has(currentRoute())) navigateToFallback();
   else updateNavigationVisibility();
+}
+
+function ensureSupervisorOption(select) {
+  if (!select || select.querySelector('option[value="supervisor"]')) return;
+  const option = document.createElement('option');
+  option.value = 'supervisor';
+  option.textContent = 'Supervisor';
+  const production = select.querySelector('option[value="producao"]');
+  select.insertBefore(option, production || null);
 }
 
 function attachRoleHint(select, hint) {
   if (!select || !hint) return;
   const update = () => {
     hint.textContent = roleDescription(select.value);
-    hint.style.borderColor = select.value === 'almoxarifado' ? 'rgba(15,118,110,.32)' : '';
-    hint.style.background = select.value === 'almoxarifado' ? '#f0fdfa' : '';
+    const emphasized = ['almoxarifado', 'supervisor'].includes(select.value);
+    hint.style.borderColor = emphasized ? 'rgba(15,118,110,.32)' : '';
+    hint.style.background = emphasized ? '#f0fdfa' : '';
   };
 
   if (!select.dataset.roleHintBound) {
@@ -200,6 +253,10 @@ function decorateEditUserModal() {
   const select = form?.querySelector('select[name="role"]');
   if (!form || !select) return;
 
+  ensureSupervisorOption(select);
+  const storedRole = users[editingUserId]?.role;
+  if (storedRole && select.value !== storedRole) select.value = storedRole;
+
   let hint = form.querySelector('[data-user-role-hint]');
   if (!hint) {
     hint = document.createElement('div');
@@ -209,6 +266,17 @@ function decorateEditUserModal() {
   }
 
   attachRoleHint(select, hint);
+}
+
+function patchUserCards() {
+  if (!isManager()) return;
+  document.querySelectorAll('[data-edit-user]').forEach(button => {
+    const user = users[button.dataset.editUser];
+    const badge = button.closest('.user-card')?.querySelector('.role-badge');
+    if (!user || !badge) return;
+    const expected = roleLabel(user.role);
+    if (badge.textContent !== expected) badge.textContent = expected;
+  });
 }
 
 function closeCreateUserModal() {
@@ -221,6 +289,7 @@ function roleOptions(selected = 'almoxarifado') {
     ['gerente', 'Gerente'],
     ['compras', 'Compras'],
     ['almoxarifado', 'Almoxarifado'],
+    ['supervisor', 'Supervisor'],
     ['producao', 'Produção'],
     ['operador', 'Operador']
   ].map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`).join('');
@@ -324,7 +393,7 @@ async function createSystemUser() {
 
     await signOut(creatorAuth).catch(() => {});
     closeCreateUserModal();
-    toast(`Usuário criado com o perfil ${data.role === 'almoxarifado' ? 'Almoxarifado' : data.role}.`);
+    toast(`Usuário criado com o perfil ${roleLabel(data.role)}.`);
   } catch (error) {
     console.error('Falha ao criar usuário:', error);
     toast(authErrorMessage(error), 'error');
@@ -373,6 +442,7 @@ function applyUi() {
   enforceCurrentRoute();
   injectCreateUserUi();
   decorateEditUserModal();
+  patchUserCards();
 }
 
 function scheduleUi(delay = 0) {
@@ -380,10 +450,29 @@ function scheduleUi(delay = 0) {
   uiTimer = setTimeout(applyUi, delay);
 }
 
-document.addEventListener('click', event => {
-  const routeButton = event.target.closest?.('[data-route]');
+function subscribeUsersIfManager() {
+  stopUsers?.();
+  stopUsers = null;
+  users = {};
+  if (!isManager()) return;
 
-  if (routeButton && isWarehouse() && !ALMOXARIFADO_ROUTES.has(routeButton.dataset.route || '')) {
+  stopUsers = onValue(ref(db, 'users'), snapshot => {
+    users = snapshot.val() || {};
+    scheduleUi(0);
+  }, error => console.error('Falha ao carregar usuários para as permissões:', error));
+}
+
+document.addEventListener('click', event => {
+  const editButton = event.target.closest?.('[data-edit-user]');
+  if (editButton) {
+    editingUserId = editButton.dataset.editUser || '';
+    setTimeout(() => scheduleUi(0), 0);
+  }
+
+  const routeButton = event.target.closest?.('[data-route]');
+  const allowed = restrictedRoutes();
+
+  if (routeButton && allowed && !allowed.has(routeButton.dataset.route || '')) {
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
@@ -414,8 +503,12 @@ if (modalRoot) new MutationObserver(() => scheduleUi(0)).observe(modalRoot, { ch
 
 onAuthStateChanged(auth, user => {
   stopProfile?.();
+  stopUsers?.();
   stopProfile = null;
+  stopUsers = null;
   profile = null;
+  users = {};
+  editingUserId = '';
 
   if (!user) {
     updateNavigationVisibility();
@@ -424,6 +517,7 @@ onAuthStateChanged(auth, user => {
 
   stopProfile = onValue(ref(db, `users/${user.uid}`), snapshot => {
     profile = snapshot.val() || null;
+    subscribeUsersIfManager();
     scheduleUi(0);
     setTimeout(() => scheduleUi(0), 120);
     setTimeout(() => scheduleUi(0), 420);
