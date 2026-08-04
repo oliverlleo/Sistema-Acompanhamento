@@ -1,4 +1,4 @@
-const CACHE_NAME = 'obraflow-shell-v20260804-1000';
+const CACHE_NAME = 'obraflow-shell-v20260804-1034';
 const APP_SHELL = [
   './',
   './index.html',
@@ -12,7 +12,8 @@ const APP_SHELL = [
   './app.js',
   './route-features.js',
   './pwa-install.js',
-  './notification-center.js'
+  './notification-center.js',
+  './receipt-notification-fallback.js'
 ];
 
 self.addEventListener('notificationclick', event => {
