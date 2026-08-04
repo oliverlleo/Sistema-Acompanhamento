@@ -55,6 +55,24 @@ function deviceId() {
   }
 }
 
+async function removeSubscriptionWithOldVapidKey(registration) {
+  if (!VAPID_KEY) return;
+  const subscription = await registration.pushManager.getSubscription();
+  const applicationServerKey = subscription?.options?.applicationServerKey;
+  if (!subscription || !applicationServerKey) return;
+
+  try {
+    const paddedKey = VAPID_KEY.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(VAPID_KEY.length / 4) * 4, '=');
+    const expectedKey = Uint8Array.from(atob(paddedKey), character => character.charCodeAt(0));
+    const currentKey = new Uint8Array(applicationServerKey);
+    const matches = currentKey.length === expectedKey.length
+      && currentKey.every((value, index) => value === expectedKey[index]);
+    if (!matches) await subscription.unsubscribe();
+  } catch (error) {
+    console.warn('NÃ£o foi possÃ­vel conferir a chave da inscriÃ§Ã£o push existente.', error);
+  }
+}
+
 function allNotices() {
   return Object.entries(notices)
     .map(([id, item]) => ({ id, ...item, readAt: num(reads[id]) }))
@@ -352,6 +370,7 @@ async function registerMessaging() {
   if (!(await isSupported().catch(() => false))) throw new Error('Este navegador não suporta notificações push.');
   const registration = await navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' });
   await navigator.serviceWorker.ready;
+  await removeSubscriptionWithOldVapidKey(registration);
   const messaging = getMessaging(app);
   const options = { serviceWorkerRegistration: registration };
   if (VAPID_KEY) options.vapidKey = VAPID_KEY;
