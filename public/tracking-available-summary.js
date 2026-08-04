@@ -3,7 +3,6 @@ import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/12.16.
 import {
   allocation,
   clamp,
-  purchaseCommitted,
   quantityNumber
 } from './material-flow.js?v=20260803-1648';
 
@@ -59,6 +58,7 @@ function normalize(value = '') {
 
 function availabilityForMaterial(material) {
   const alloc = allocation(material);
+  const requiredLimit = alloc.required || Number.MAX_SAFE_INTEGER;
   const received = clamp(
     quantityNumber(material, material.qtyReceived),
     0,
@@ -67,12 +67,14 @@ function availabilityForMaterial(material) {
   const sourceAvailable = clamp(
     alloc.stockQty + received,
     0,
-    alloc.required || Number.MAX_SAFE_INTEGER
+    requiredLimit
   );
+  const stockAvailable = Math.min(alloc.stockQty, sourceAvailable);
+  const receivedAvailable = Math.max(0, sourceAvailable - stockAvailable);
   const sentToPainting = clamp(
     quantityNumber(material, material.paintingSentQty),
     0,
-    alloc.required || Number.MAX_SAFE_INTEGER
+    requiredLimit
   );
   const returnedFromPainting = clamp(
     quantityNumber(material, material.paintingReturnedQty),
@@ -82,15 +84,18 @@ function availabilityForMaterial(material) {
   const deliveredToSite = clamp(
     quantityNumber(material, material.siteDeliveredQty),
     0,
-    alloc.required || Number.MAX_SAFE_INTEGER
+    requiredLimit
   );
   const awayAtPainting = Math.max(0, sentToPainting - returnedFromPainting);
+
+  // Separado em produção continua dentro da empresa e não é descontado.
   const available = Math.max(0, sourceAvailable - awayAtPainting - deliveredToSite);
 
   return {
     material,
     alloc,
-    received,
+    stockAvailable,
+    receivedAvailable,
     awayAtPainting,
     deliveredToSite,
     available
@@ -99,31 +104,30 @@ function availabilityForMaterial(material) {
 
 function quantitySummary() {
   let totalRequiredQty = 0;
+  let stockAvailableQty = 0;
+  let receivedAvailableQty = 0;
+  let awayAtPaintingQty = 0;
+  let deliveredToSiteQty = 0;
   let availableQty = 0;
-  let availableItems = 0;
-  let purchasedItems = 0;
-  let receivedPurchaseItems = 0;
 
   const availableRows = materials.map(availabilityForMaterial);
 
   availableRows.forEach(row => {
     totalRequiredQty += row.alloc.required;
+    stockAvailableQty += row.stockAvailable;
+    receivedAvailableQty += row.receivedAvailable;
+    awayAtPaintingQty += row.awayAtPainting;
+    deliveredToSiteQty += row.deliveredToSite;
     availableQty += row.available;
-    if (row.available > 0) availableItems += 1;
-
-    if (row.alloc.purchaseQty > 0 && purchaseCommitted(row.material)) {
-      purchasedItems += 1;
-      if (row.received > 0) receivedPurchaseItems += 1;
-    }
   });
 
   return {
-    totalItems: materials.length,
     totalRequiredQty,
+    stockAvailableQty,
+    receivedAvailableQty,
+    awayAtPaintingQty,
+    deliveredToSiteQty,
     availableQty,
-    availableItems,
-    purchasedItems,
-    receivedPurchaseItems,
     availableRows: availableRows.filter(row => row.available > 0)
   };
 }
@@ -200,7 +204,7 @@ function receivedDate(material) {
 }
 
 function rowHtml(row) {
-  const { material, alloc, received, available } = row;
+  const { material, alloc, receivedAvailable, available } = row;
   const [origin, tone] = originMeta(alloc.source);
   const description = material.description || 'Sem descrição';
   const sub = [material.code, material.type].filter(Boolean).join(' · ') || 'Sem código';
@@ -218,8 +222,8 @@ function rowHtml(row) {
     <td><span class="trk-main" title="${escapeHtml(description)}">${escapeHtml(description)}</span><span class="trk-sub">${escapeHtml(sub)}</span></td>
     <td>${escapeHtml(material.category || 'Sem categoria')}</td>
     <td><span class="trk-pill trk-${tone}">${escapeHtml(origin)}</span></td>
-    <td class="trk-qty">${formatQuantity(alloc.stockQty)} ${escapeHtml(material.unit || 'un')}</td>
-    <td class="trk-qty">${formatQuantity(received)} ${escapeHtml(material.unit || 'un')}</td>
+    <td class="trk-qty">${formatQuantity(row.stockAvailable)} ${escapeHtml(material.unit || 'un')}</td>
+    <td class="trk-qty">${formatQuantity(receivedAvailable)} ${escapeHtml(material.unit || 'un')}</td>
     <td class="trk-qty">${formatQuantity(available)} ${escapeHtml(material.unit || 'un')}</td>
     <td>${formatDate(receivedDate(material))}</td>
   </tr>`;
@@ -241,8 +245,7 @@ function applyAvailableSearch() {
     if (match) visible += 1;
   });
 
-  const countText = `${visible} item${visible === 1 ? '' : 's'}`;
-  setText(count, countText);
+  setText(count, `${visible} item${visible === 1 ? '' : 's'}`);
   const empty = $('#trackingEmpty', tbody);
   if (empty) empty.hidden = visible !== 0;
 }
@@ -253,13 +256,15 @@ function patchAvailableRows(data) {
   if (!table || !tbody) return;
 
   const headers = $$('thead th', table);
-  setText(headers[5], 'Disponível na empresa');
+  setText(headers[3], 'Quantidade de estoque');
+  setText(headers[4], 'Quantidade recebida');
+  setText(headers[5], 'Quantidade disponível');
 
   const rowsSignature = data.availableRows
     .map(row => [
       row.material.id || row.material.code || row.material.description || '',
-      row.alloc.stockQty,
-      row.received,
+      row.stockAvailable,
+      row.receivedAvailable,
       row.available,
       row.material.updatedAt || ''
     ].join(':'))
@@ -296,12 +301,12 @@ function patch() {
   if (!summary) return;
 
   const signature = [
-    data.totalItems,
     data.totalRequiredQty,
-    data.availableQty,
-    data.availableItems,
-    data.purchasedItems,
-    data.receivedPurchaseItems
+    data.stockAvailableQty,
+    data.receivedAvailableQty,
+    data.awayAtPaintingQty,
+    data.deliveredToSiteQty,
+    data.availableQty
   ].join('|');
 
   if (lastSignature !== signature || summary.dataset.availableSummary !== signature) {
@@ -310,24 +315,24 @@ function patch() {
     summary.style.gridTemplateColumns = 'repeat(4,minmax(0,1fr))';
     summary.replaceChildren(
       metric(
-        'Total de itens',
-        `${data.totalItems} itens`,
-        'materiais cadastrados na obra'
+        'Quantidade de estoque',
+        formatQuantity(data.stockAvailableQty),
+        'quantidade disponível com origem em estoque'
       ),
       metric(
-        'Itens disponíveis na empresa',
-        `${data.availableItems} itens`,
-        'inclui materiais separados em produção'
+        'Quantidade recebida',
+        formatQuantity(data.receivedAvailableQty),
+        'quantidade recebida das compras'
       ),
       metric(
-        'Recebidos das compras',
-        `${data.receivedPurchaseItems} de ${data.purchasedItems} itens`,
-        'itens comprados com recebimento registrado'
+        'Quantidade fora da empresa',
+        formatQuantity(data.awayAtPaintingQty + data.deliveredToSiteQty),
+        `${formatQuantity(data.awayAtPaintingQty)} em pintura · ${formatQuantity(data.deliveredToSiteQty)} enviados para obra`
       ),
       metric(
-        'Quantidade disponível na empresa',
-        `${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)} un`,
-        'só desconta pintura em andamento e envio para a obra'
+        'Quantidade disponível',
+        `${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)}`,
+        'inclui o que está separado em produção'
       )
     );
   }
@@ -353,7 +358,7 @@ async function loadProject(id) {
     materials = Object.values(snapshot.val() || {});
     queuePatch();
   } catch (error) {
-    console.error('Falha ao calcular materiais disponíveis:', error);
+    console.error('Falha ao calcular as quantidades disponíveis:', error);
   }
 }
 
