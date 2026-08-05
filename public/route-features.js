@@ -1,6 +1,7 @@
 import './commitment-summary.js?v=20260803-0959';
 import './search-caret-fix.js?v=20260803-1025';
 import './direct-paint-delivery.js?v=20260803-1648';
+import './bulk-paint-destination-visibility.js?v=20260805-1115';
 import './acompanhamento-detail.js?v=20260804-1920';
 import './tracking-item-counts.js?v=20260804-1848';
 import './tracking-available-summary.js?v=20260804-1848';
