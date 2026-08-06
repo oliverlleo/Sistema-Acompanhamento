@@ -14,6 +14,7 @@ import './tracking-available-name.js?v=20260803-2208';
 import './materials-origin-status.js?v=20260803-1943';
 import './purchase-needs-action-filter.js?v=20260803-1958';
 import './global-receiving.js?v=20260803-2013';
+import './receiving-search-focus.js?v=20260806-1143';
 import './global-receiving-color.js?v=20260803-2030';
 import './user-role-permissions.js?v=20260803-2149';
 import './calendar.js?v=20260803-1950';
