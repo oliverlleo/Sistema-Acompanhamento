@@ -134,7 +134,14 @@ function isPast(date) {
 }
 
 function safeFirebaseKey(value, fallback = 'campo') {
-  return String(value || fallback).replace(/[.#$\/\[\]]/g, '_').trim() || fallback;
+  const sanitized = String(value ?? '')
+    .normalize('NFKC')
+    .replace(/[\u0000-\u001F\u007F]/g, '_')
+    .replace(/[.#$\/\[\]]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return sanitized || fallback;
 }
 
 function safeFirebaseObject(value) {

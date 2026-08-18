@@ -72,7 +72,13 @@ const normalizeText = (value = '') => String(value)
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .replace(/[^a-zA-Z0-9]+/g, ' ').trim().toLowerCase();
 function safeFirebaseKey(value, fallback = 'campo') {
-  const sanitized = String(value ?? '').replace(/[.#$\/\[\]]/g, '_').trim();
+  const sanitized = String(value ?? '')
+    .normalize('NFKC')
+    .replace(/[\u0000-\u001F\u007F]/g, '_')
+    .replace(/[.#$\/\[\]]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
   return sanitized || fallback;
 }
 function safeFirebaseObject(value) {

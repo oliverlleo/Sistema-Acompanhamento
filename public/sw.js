@@ -1,4 +1,4 @@
-const CACHE_NAME = 'obraflow-shell-v20260806-1200';
+const CACHE_NAME = 'obraflow-shell-v20260818-1439';
 const APP_SHELL = [
   './',
   './index.html',
