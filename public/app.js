@@ -71,6 +71,23 @@ const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, (char) => (
 const normalizeText = (value = '') => String(value)
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .replace(/[^a-zA-Z0-9]+/g, ' ').trim().toLowerCase();
+function safeFirebaseKey(value, fallback = 'campo') {
+  const sanitized = String(value ?? '').replace(/[.#$\/\[\]]/g, '_').trim();
+  return sanitized || fallback;
+}
+function safeFirebaseObject(value) {
+  if (Array.isArray(value)) return value.map(safeFirebaseObject);
+  if (!value || typeof value !== 'object') return value;
+  const output = {};
+  Object.entries(value).forEach(([rawKey, child]) => {
+    const base = safeFirebaseKey(rawKey);
+    let key = base;
+    let suffix = 2;
+    while (Object.prototype.hasOwnProperty.call(output, key)) key = `${base}_${suffix++}`;
+    output[key] = safeFirebaseObject(child);
+  });
+  return output;
+}
 const isPast = (date) => date && new Date(`${date}T23:59:59`).getTime() < Date.now();
 const initials = (name = 'U') => name.split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]).join('').toUpperCase();
 
@@ -1472,7 +1489,14 @@ function normalizeMatrixRows() {
     const quantity = num(getField('quantity')) || 1;
     const width = getField('width'), height = getField('height'), length = getField('length'), area = getField('area');
     const details = {};
-    row.forEach((value, index) => { if (!mappedIndexes.has(index) && value !== '' && value !== null && imp.headers[index]) details[imp.headers[index]] = value; });
+    row.forEach((value, index) => {
+      if (mappedIndexes.has(index) || value === '' || value === null || value === undefined || !imp.headers[index]) return;
+      const base = safeFirebaseKey(imp.headers[index], `Coluna_${index + 1}`);
+      let key = base;
+      let suffix = 2;
+      while (Object.prototype.hasOwnProperty.call(details, key)) key = `${base}_${suffix++}`;
+      details[key] = value;
+    });
     return {
       code, description, type: String(getField('type') || '').trim(), category,
       qtyRequired: quantity, unit: String(getField('unit') || 'un').trim() || 'un',
@@ -1580,6 +1604,7 @@ async function confirmImport() {
     const id = push(ref(db, `materials/${projectId}`)).key;
     const payload = {
       ...row, id, projectId, category: category || row.category || 'Importado',
+      sourceDetails: safeFirebaseObject(row.sourceDetails || {}),
       source: row.source || state.importer.defaultSource || 'compra',
       paintingRequired: Boolean(row.paintingRequired),
       qtyReceived: 0, stockReservedQty: 0, paintingSentQty: 0,
