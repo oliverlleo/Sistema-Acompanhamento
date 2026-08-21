@@ -67,14 +67,9 @@ function availableQuantityForMaterial(material = {}) {
   const required = alloc.required;
   if (!(required > 0)) return 0;
 
-  if (material.paintingRequired) {
-    const returnedFromPainting = clamp(
-      quantityNumber(material, material.paintingReturnedQty),
-      0,
-      required
-    );
-    return returnedFromPainting;
-  }
+  // A parcela definida como estoque já está disponível e nunca deve ser
+  // anulada pelo fato de outra parcela do mesmo material precisar de pintura.
+  const stockAvailable = clamp(alloc.stockQty, 0, required);
 
   const receivedFromPurchase = clamp(
     quantityNumber(material, material.qtyReceived),
@@ -82,7 +77,19 @@ function availableQuantityForMaterial(material = {}) {
     alloc.purchaseQty
   );
 
-  return clamp(alloc.stockQty + receivedFromPurchase, 0, required);
+  let purchaseAvailable = receivedFromPurchase;
+
+  // Quando a compra precisa de pintura, a parcela comprada só passa a contar
+  // como disponível depois do retorno da pintura. O estoque continua contando.
+  if (material.paintingRequired && alloc.purchaseQty > 0) {
+    purchaseAvailable = clamp(
+      quantityNumber(material, material.paintingReturnedQty),
+      0,
+      alloc.purchaseQty
+    );
+  }
+
+  return clamp(stockAvailable + purchaseAvailable, 0, required);
 }
 
 function availabilityForProject(projectId) {
