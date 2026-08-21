@@ -167,6 +167,15 @@ function queuePatch() {
   requestAnimationFrame(() => setTimeout(patch, 0));
 }
 
+async function readProjectMaterials(id) {
+  const path = `materials/${id}`;
+  if (window.ObraFlowBackendGuard?.read) {
+    return window.ObraFlowBackendGuard.read(path, 'tracking-available-summary');
+  }
+  const snapshot = await get(ref(db, path));
+  return snapshot.val() || {};
+}
+
 async function loadProject(id) {
   if (!id) return;
   const version = ++requestVersion;
@@ -174,9 +183,9 @@ async function loadProject(id) {
   lastSignature = '';
 
   try {
-    const snapshot = await get(ref(db, `materials/${id}`));
+    const value = await readProjectMaterials(id);
     if (version !== requestVersion || currentRoute() !== 'estoque') return;
-    materials = Object.values(snapshot.val() || {});
+    materials = Object.values(value || {});
     queuePatch();
   } catch (error) {
     console.error('Falha ao calcular materiais conferidos:', error);
@@ -195,6 +204,16 @@ document.addEventListener('keydown', event => {
     loadProject(card.dataset.separatedProject);
   }
 }, true);
+
+window.addEventListener('obraflow:backend-path-synced', event => {
+  if (!projectId || currentRoute() !== 'estoque') return;
+  const expectedPath = `materials/${projectId}`;
+  if (event.detail?.path !== expectedPath) return;
+
+  materials = Object.values(event.detail.value || {});
+  lastSignature = '';
+  queuePatch();
+});
 
 new MutationObserver(queuePatch).observe(document.documentElement, {
   childList: true,

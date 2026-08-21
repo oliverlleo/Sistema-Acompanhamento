@@ -127,6 +127,15 @@ function queuePatch() {
   requestAnimationFrame(() => setTimeout(patchCategories, 0));
 }
 
+async function readProjectMaterials(id) {
+  const path = `materials/${id}`;
+  if (window.ObraFlowBackendGuard?.read) {
+    return window.ObraFlowBackendGuard.read(path, 'tracking-category-progress');
+  }
+  const snapshot = await get(ref(db, path));
+  return snapshot.val() || {};
+}
+
 async function loadProject(id) {
   if (!id || currentRoute() !== 'estoque') return;
   const version = ++loadVersion;
@@ -135,9 +144,9 @@ async function loadProject(id) {
   removeInjected();
 
   try {
-    const snapshot = await get(ref(db, `materials/${id}`));
+    const value = await readProjectMaterials(id);
     if (version !== loadVersion || projectId !== id || currentRoute() !== 'estoque') return;
-    materials = Object.values(snapshot.val() || {});
+    materials = Object.values(value || {});
     queuePatch();
   } catch (error) {
     console.error('Falha ao carregar categorias do acompanhamento:', error);
@@ -168,6 +177,13 @@ document.addEventListener('keydown', event => {
     loadProject(card.dataset.separatedProject || '');
   }
 }, true);
+
+window.addEventListener('obraflow:backend-path-synced', event => {
+  if (!projectId || currentRoute() !== 'estoque') return;
+  if (event.detail?.path !== `materials/${projectId}`) return;
+  materials = Object.values(event.detail.value || {});
+  queuePatch();
+});
 
 window.addEventListener('hashchange', () => {
   if (currentRoute() !== 'estoque') {
