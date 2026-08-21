@@ -17,16 +17,20 @@ const auth = getAuth(app);
 const db = getDatabase(app);
 
 // A proteção nunca relê /materials inteiro. Com muitas obras isso seria caro.
-// Ela confere apenas estruturas leves e a obra ativa, quando houver.
+// Ela confere apenas estruturas leves, a obra ativa e poucas rotas usadas
+// recentemente pelas telas internas.
 const LIGHT_PATHS = ['projects', 'projectSummaries'];
 const RETRY_DELAYS = [0, 400, 1200, 3000, 7000];
 const MIN_CONTEXT_RECHECK_MS = 60_000;
+const WATCHED_PATH_TTL_MS = 10 * 60_000;
+const MAX_WATCHED_PATHS = 4;
 
 let currentUser = null;
 let verificationInFlight = null;
 let lastVerifiedAt = 0;
 let stopConnectionListener = null;
 let delayedChecks = [];
+const watchedPaths = new Map();
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -49,8 +53,34 @@ function currentRoute() {
   return location.hash.replace(/^#/, '') || 'dashboard';
 }
 
+function rememberPath(path) {
+  if (!/^materials\/[^/]+$/.test(path) && !/^activities\/[^/]+$/.test(path)) return;
+  watchedPaths.delete(path);
+  watchedPaths.set(path, Date.now());
+
+  while (watchedPaths.size > MAX_WATCHED_PATHS) {
+    const oldest = watchedPaths.keys().next().value;
+    watchedPaths.delete(oldest);
+  }
+}
+
+function recentWatchedPaths() {
+  const cutoff = Date.now() - WATCHED_PATH_TTL_MS;
+  const paths = [];
+
+  for (const [path, usedAt] of watchedPaths.entries()) {
+    if (usedAt < cutoff) {
+      watchedPaths.delete(path);
+      continue;
+    }
+    paths.push(path);
+  }
+
+  return paths;
+}
+
 function contextPaths() {
-  const paths = [...LIGHT_PATHS];
+  const paths = [...LIGHT_PATHS, ...recentWatchedPaths()];
   const projectId = currentProjectId();
 
   if (projectId) {
@@ -62,7 +92,8 @@ function contextPaths() {
   return [...new Set(paths)];
 }
 
-async function readPathWithRetry(path, reason) {
+async function readPathWithRetry(path, reason, { remember = true } = {}) {
+  if (remember) rememberPath(path);
   let lastError = null;
 
   for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt += 1) {
@@ -95,7 +126,10 @@ async function verifyContext(reason = 'automatic', { force = false } = {}) {
   verificationInFlight = (async () => {
     const paths = contextPaths();
     const results = await Promise.allSettled(
-      paths.map(async path => [path, await readPathWithRetry(path, reason)])
+      paths.map(async path => [
+        path,
+        await readPathWithRetry(path, reason, { remember: false })
+      ])
     );
 
     const failures = results.filter(result => result.status === 'rejected');
@@ -166,6 +200,7 @@ onAuthStateChanged(auth, user => {
 
   if (!user) {
     lastVerifiedAt = 0;
+    watchedPaths.clear();
     window.ObraFlowBackendSnapshot = null;
     stopConnectionListener?.();
     stopConnectionListener = null;
