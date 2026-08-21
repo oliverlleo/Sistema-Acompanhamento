@@ -3,7 +3,6 @@ import { getDatabase, ref, get } from 'https://www.gstatic.com/firebasejs/12.16.
 import {
   allocation,
   clamp,
-  purchaseCommitted,
   quantityNumber
 } from './material-flow.js?v=20260803-1648';
 
@@ -35,63 +34,87 @@ function formatQuantity(value) {
   return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(value || 0);
 }
 
-function quantitySummary() {
-  let totalRequiredQty = 0;
-  let availableQty = 0;
-  let stockPendingItems = 0;
-  let purchasedItems = 0;
-  let receivedPurchaseItems = 0;
+function formatDate(value) {
+  if (!value) return '—';
+  const date = typeof value === 'number' ? new Date(value) : new Date(`${value}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat('pt-BR').format(date);
+}
 
-  materials.forEach(material => {
-    const alloc = allocation(material);
-    const limit = alloc.required || Number.MAX_SAFE_INTEGER;
-    const received = clamp(
-      quantityNumber(material, material.qtyReceived),
-      0,
-      alloc.purchaseQty
-    );
-    const sentToPainting = clamp(
-      quantityNumber(material, material.paintingSentQty),
-      0,
-      limit
-    );
-    const returnedFromPainting = clamp(
+function escapeHtml(value = '') {
+  return String(value).replace(/[&<>'"]/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+  })[character]);
+}
+
+function normalize(value = '') {
+  return String(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function percentage(value, total) {
+  if (!(total > 0)) return { exact: 0, visual: 0, label: '0%' };
+  const exact = Math.min(100, Math.max(0, (value / total) * 100));
+  return {
+    exact,
+    visual: exact > 0 ? Math.max(1.2, exact) : 0,
+    label: exact > 0 && exact < 1 ? '<1%' : `${Math.round(exact)}%`
+  };
+}
+
+function availabilityForMaterial(material = {}) {
+  const alloc = allocation(material);
+  const required = alloc.required;
+  if (!(required > 0)) {
+    return { required: 0, stock: 0, purchase: 0, painting: 0, total: 0 };
+  }
+
+  if (material.paintingRequired) {
+    const painting = clamp(
       quantityNumber(material, material.paintingReturnedQty),
       0,
-      sentToPainting || Number.MAX_SAFE_INTEGER
+      required
     );
-    const deliveredToSite = clamp(
-      quantityNumber(material, material.siteDeliveredQty),
-      0,
-      limit
-    );
-    const awayAtPainting = Math.max(0, sentToPainting - returnedFromPainting);
+    return { required, stock: 0, purchase: 0, painting, total: painting };
+  }
 
-    // Única alteração: quantidade separada não entra no desconto.
-    const alreadyUnavailable = awayAtPainting + deliveredToSite;
-    const stockRemaining = Math.max(0, alloc.stockQty - alreadyUnavailable);
-    const usedBeyondStock = Math.max(0, alreadyUnavailable - alloc.stockQty);
-    const purchaseRemaining = Math.max(0, received - usedBeyondStock);
+  const stock = clamp(alloc.stockQty, 0, required);
+  const purchase = clamp(
+    quantityNumber(material, material.qtyReceived),
+    0,
+    alloc.purchaseQty
+  );
+  const total = clamp(stock + purchase, 0, required);
 
-    totalRequiredQty += alloc.required;
-    availableQty += stockRemaining + purchaseRemaining;
+  return { required, stock, purchase, painting: 0, total };
+}
 
-    if (stockRemaining > 0) stockPendingItems += 1;
+function quantitySummary() {
+  const summary = {
+    totalItems: materials.length,
+    totalRequiredQty: 0,
+    availableQty: 0,
+    stockAvailableQty: 0,
+    purchaseAvailableQty: 0,
+    paintingAvailableQty: 0,
+    availableItems: 0
+  };
 
-    if (alloc.purchaseQty > 0 && purchaseCommitted(material)) {
-      purchasedItems += 1;
-      if (received > 0) receivedPurchaseItems += 1;
-    }
+  materials.forEach(material => {
+    const availability = availabilityForMaterial(material);
+    summary.totalRequiredQty += availability.required;
+    summary.availableQty += availability.total;
+    summary.stockAvailableQty += availability.stock;
+    summary.purchaseAvailableQty += availability.purchase;
+    summary.paintingAvailableQty += availability.painting;
+    if (availability.total > 0) summary.availableItems += 1;
   });
 
-  return {
-    totalItems: materials.length,
-    totalRequiredQty,
-    availableQty,
-    stockPendingItems,
-    purchasedItems,
-    receivedPurchaseItems
-  };
+  summary.percent = percentage(summary.availableQty, summary.totalRequiredQty);
+  return summary;
 }
 
 function metric(label, value, note = '') {
@@ -115,53 +138,209 @@ function metric(label, value, note = '') {
   return article;
 }
 
+function patchStageIndicator(data) {
+  const stage = $('[data-tracking-stage="disponivel"]');
+  if (!stage) return;
+
+  const donut = $('.trk-donut', stage);
+  const percentLabel = $('.trk-donut strong', stage);
+  const quantityLabel = $('.trk-stage-copy span', stage);
+
+  if (donut && donut.style.getPropertyValue('--value') !== String(data.percent.visual)) {
+    donut.style.setProperty('--value', String(data.percent.visual));
+  }
+  if (percentLabel && percentLabel.textContent !== data.percent.label) {
+    percentLabel.textContent = data.percent.label;
+  }
+
+  const quantityText = `${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)}`;
+  if (quantityLabel && quantityLabel.textContent !== quantityText) quantityLabel.textContent = quantityText;
+}
+
+function patchProgress(data) {
+  const progressTitle = $('.trk-progress-head span');
+  const progressValue = $('.trk-progress-head strong');
+  const progressBar = $('.trk-progress i');
+
+  if (progressTitle && progressTitle.textContent !== 'Disponível') progressTitle.textContent = 'Disponível';
+
+  const valueText = `${data.percent.label} · ${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)}`;
+  if (progressValue && progressValue.textContent !== valueText) progressValue.textContent = valueText;
+  if (progressBar && progressBar.style.width !== `${data.percent.visual}%`) {
+    progressBar.style.width = `${data.percent.visual}%`;
+  }
+}
+
+function materialLabel(material = {}) {
+  const description = material.description || 'Sem descrição';
+  const sub = [material.code, material.type].filter(Boolean).join(' · ') || 'Sem código';
+  return `<span class="trk-main" title="${escapeHtml(description)}">${escapeHtml(description)}</span><span class="trk-sub">${escapeHtml(sub)}</span>`;
+}
+
+function originLabel(availability) {
+  if (availability.painting > 0) return ['Retorno da pintura', 'ok'];
+  if (availability.stock > 0 && availability.purchase > 0) return ['Estoque + compra', 'warn'];
+  if (availability.stock > 0) return ['Estoque', 'violet'];
+  return ['Compra', 'info'];
+}
+
+function availabilityDate(material, availability) {
+  if (availability.painting > 0) {
+    return material.paintingReturnDate || material.paintingReturnedDate || '';
+  }
+  if (availability.purchase > 0) return material.receivedDate || '';
+  return '';
+}
+
+function availableRowsHtml() {
+  return materials
+    .map(material => ({ material, availability: availabilityForMaterial(material) }))
+    .filter(row => row.availability.total > 0)
+    .sort((a, b) => String(a.material.category || '').localeCompare(String(b.material.category || ''), 'pt-BR')
+      || String(a.material.description || '').localeCompare(String(b.material.description || ''), 'pt-BR'))
+    .map(({ material, availability }) => {
+      const [origin, tone] = originLabel(availability);
+      const date = availabilityDate(material, availability);
+      const search = normalize([
+        material.code,
+        material.description,
+        material.category,
+        material.color,
+        origin,
+        date
+      ].filter(Boolean).join(' '));
+
+      return `<tr data-tracking-row data-search="${escapeHtml(search)}">
+        <td>${materialLabel(material)}</td>
+        <td>${escapeHtml(material.category || 'Sem categoria')}</td>
+        <td><span class="trk-pill trk-${tone}">${escapeHtml(origin)}</span></td>
+        <td class="trk-qty">${formatQuantity(availability.stock)} ${escapeHtml(material.unit || 'un')}</td>
+        <td class="trk-qty">${formatQuantity(availability.purchase)} ${escapeHtml(material.unit || 'un')}</td>
+        <td class="trk-qty">${formatQuantity(availability.painting)} ${escapeHtml(material.unit || 'un')}</td>
+        <td class="trk-qty">${formatQuantity(availability.total)} ${escapeHtml(material.unit || 'un')}</td>
+        <td>${formatDate(date)}</td>
+      </tr>`;
+    }).join('');
+}
+
+function bindAvailableSearch() {
+  const input = $('#trackingSearch');
+  const count = $('#trackingCount');
+  if (!input || input.dataset.availabilitySearchBound === '1') return;
+  input.dataset.availabilitySearchBound = '1';
+
+  const apply = () => {
+    const query = normalize(input.value || '');
+    const rows = [...document.querySelectorAll('[data-tracking-row]')];
+    let visible = 0;
+    rows.forEach(row => {
+      const match = !query || String(row.dataset.search || '').includes(query);
+      row.hidden = !match;
+      if (match) visible += 1;
+    });
+    if (count) count.textContent = `${visible} item${visible === 1 ? '' : 's'}`;
+    const empty = $('#trackingEmpty');
+    if (empty) empty.hidden = visible !== 0;
+  };
+
+  input.addEventListener('input', apply);
+  apply();
+}
+
+function patchAvailableTable(data) {
+  const table = $('.trk-table');
+  if (!table) return;
+
+  const signature = [
+    data.availableQty,
+    data.stockAvailableQty,
+    data.purchaseAvailableQty,
+    data.paintingAvailableQty,
+    data.totalRequiredQty,
+    materials.length
+  ].join('|');
+  if (table.dataset.availabilityRule === signature) return;
+  table.dataset.availabilityRule = signature;
+
+  const headers = [
+    'Material',
+    'Categoria',
+    'Origem disponível',
+    'Estoque disponível',
+    'Recebido sem pintura',
+    'Retornado da pintura',
+    'Disponível',
+    'Data de recebimento / retorno'
+  ];
+
+  const thead = table.querySelector('thead');
+  const tbody = table.querySelector('tbody');
+  if (!thead || !tbody) return;
+
+  thead.innerHTML = `<tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr>`;
+  tbody.innerHTML = `${availableRowsHtml()}<tr id="trackingEmpty" hidden><td colspan="${headers.length}"><div class="trk-empty"><strong>Nenhum item disponível</strong>Entram aqui estoque disponível, compras recebidas sem pintura e materiais que já retornaram da pintura.</div></td></tr>`;
+
+  bindAvailableSearch();
+}
+
 function patch() {
   patchQueued = false;
   if (currentRoute() !== 'estoque' || !projectId) return;
 
+  const data = quantitySummary();
+  patchStageIndicator(data);
+
   const activeStage = $('[data-tracking-stage].active')?.dataset.trackingStage;
   if (activeStage !== 'disponivel') return;
+
+  const panelDescription = $('.trk-panel-head p');
+  if (panelDescription) {
+    const description = 'Estoque disponível, compras recebidas sem pintura e materiais que já retornaram da pintura.';
+    if (panelDescription.textContent !== description) panelDescription.textContent = description;
+  }
 
   const summary = $('.trk-summary');
   if (!summary) return;
 
-  const data = quantitySummary();
   const signature = [
     data.totalItems,
     data.totalRequiredQty,
     data.availableQty,
-    data.stockPendingItems,
-    data.purchasedItems,
-    data.receivedPurchaseItems
+    data.stockAvailableQty,
+    data.purchaseAvailableQty,
+    data.paintingAvailableQty
   ].join('|');
 
-  if (lastSignature === signature && summary.dataset.availableSummary === signature) return;
+  if (lastSignature !== signature || summary.dataset.availableSummary !== signature) {
+    lastSignature = signature;
+    summary.dataset.availableSummary = signature;
+    summary.style.gridTemplateColumns = 'repeat(4,minmax(0,1fr))';
+    summary.replaceChildren(
+      metric(
+        'Itens disponíveis',
+        `${data.availableItems} de ${data.totalItems} itens`,
+        'itens que já atingiram a etapa de disponibilidade'
+      ),
+      metric(
+        'Disponível do estoque',
+        formatQuantity(data.stockAvailableQty),
+        'quantidade já disponível em estoque'
+      ),
+      metric(
+        'Recebido sem pintura',
+        formatQuantity(data.purchaseAvailableQty),
+        'compras recebidas que não precisam de pintura'
+      ),
+      metric(
+        'Retornado da pintura',
+        formatQuantity(data.paintingAvailableQty),
+        'quantidade que já voltou da pintura'
+      )
+    );
+  }
 
-  lastSignature = signature;
-  summary.dataset.availableSummary = signature;
-  summary.style.gridTemplateColumns = 'repeat(4,minmax(0,1fr))';
-  summary.replaceChildren(
-    metric(
-      'Total de itens',
-      `${data.totalItems} itens`,
-      'materiais cadastrados na obra'
-    ),
-    metric(
-      'Itens em estoque',
-      `${data.stockPendingItems} itens`,
-      'materiais com saldo de estoque ainda não separado'
-    ),
-    metric(
-      'Recebidos das compras',
-      `${data.receivedPurchaseItems} de ${data.purchasedItems} itens`,
-      'itens comprados com recebimento registrado'
-    ),
-    metric(
-      'Quantidade conferida e ainda não separada',
-      `${formatQuantity(data.availableQty)} de ${formatQuantity(data.totalRequiredQty)} un`,
-      'quantidade disponível na empresa'
-    )
-  );
+  patchProgress(data);
+  patchAvailableTable(data);
 }
 
 function queuePatch() {
@@ -182,7 +361,7 @@ async function loadProject(id) {
     materials = Object.values(snapshot.val() || {});
     queuePatch();
   } catch (error) {
-    console.error('Falha ao calcular materiais conferidos:', error);
+    console.error('Falha ao calcular materiais disponíveis:', error);
   }
 }
 

@@ -1,7 +1,7 @@
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
 import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
-import { allocation, availableQty } from './material-flow.js?v=20260803-1648';
+import { allocation, clamp, quantityNumber } from './material-flow.js?v=20260803-1648';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
@@ -62,6 +62,29 @@ function percentage(value, total) {
   };
 }
 
+function availableQuantityForMaterial(material = {}) {
+  const alloc = allocation(material);
+  const required = alloc.required;
+  if (!(required > 0)) return 0;
+
+  if (material.paintingRequired) {
+    const returnedFromPainting = clamp(
+      quantityNumber(material, material.paintingReturnedQty),
+      0,
+      required
+    );
+    return returnedFromPainting;
+  }
+
+  const receivedFromPurchase = clamp(
+    quantityNumber(material, material.qtyReceived),
+    0,
+    alloc.purchaseQty
+  );
+
+  return clamp(alloc.stockQty + receivedFromPurchase, 0, required);
+}
+
 function availabilityForProject(projectId) {
   const materials = Object.values(materialsByProject[projectId] || {});
   let requiredQuantity = 0;
@@ -70,7 +93,7 @@ function availabilityForProject(projectId) {
   materials.forEach(material => {
     const alloc = allocation(material);
     requiredQuantity += alloc.required;
-    availableQuantity += availableQty(material);
+    availableQuantity += availableQuantityForMaterial(material);
   });
 
   return {
@@ -130,7 +153,7 @@ function patchCards() {
     updateDonut(
       donut,
       data.quantityPercent,
-      `${data.quantityPercent.label} de disponibilidade por quantidade: estoque e compras recebidas`
+      `${data.quantityPercent.label} de disponibilidade por quantidade: estoque, compras recebidas sem pintura e retornos da pintura`
     );
   });
 }
