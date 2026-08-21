@@ -28,6 +28,7 @@ let materials = {};
 let stopMaterials = null;
 let patchQueued = false;
 let mixedActionIds = new Set();
+let lastPatchSignature = '';
 
 function currentRoute() {
   return location.hash.replace(/^#/, '') || 'dashboard';
@@ -58,6 +59,12 @@ function normalize(value = '') {
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function selectorValue(value) {
+  return typeof CSS !== 'undefined' && CSS.escape
+    ? CSS.escape(String(value))
+    : String(value).replace(/"/g, '\\"');
 }
 
 async function readPath(path, reason) {
@@ -125,6 +132,10 @@ function updateExistingRow(material, button) {
   if (!row) return;
   const separated = Math.max(0, quantityNumber(material, material.separatedQty));
   const separable = separableQty(material);
+
+  // O listener original lê esta ação no momento do clique. Quando uma nova
+  // parcela ficar disponível, separação precisa ter prioridade sobre envio.
+  button.dataset.quickAction = 'separate';
   button.textContent = separated > 0 ? 'Continuar separação' : 'Marcar separado';
   button.classList.remove('btn-ghost');
   button.classList.add('btn-secondary');
@@ -133,58 +144,104 @@ function updateExistingRow(material, button) {
   if (note) note.textContent = `Disponível agora: ${formatQty(separable)} ${material.unit || 'un'}`;
 }
 
+function restoreHiddenEmptyState() {
+  document.querySelectorAll('[data-mixed-hidden-empty]').forEach(element => {
+    element.hidden = false;
+    delete element.dataset.mixedHiddenEmpty;
+  });
+}
+
 function patchSeparationQueue() {
   patchQueued = false;
-  mixedActionIds = new Set();
-  document.querySelectorAll('[data-mixed-separation-row]').forEach(row => row.remove());
 
-  if (currentRoute() !== 'separacao' || !activeProjectId) return;
+  if (currentRoute() !== 'separacao' || !activeProjectId) {
+    mixedActionIds = new Set();
+    lastPatchSignature = '';
+    document.querySelectorAll('[data-mixed-separation-row]').forEach(row => row.remove());
+    document.querySelectorAll('[data-mixed-separation-table]').forEach(table => table.remove());
+    restoreHiddenEmptyState();
+    return;
+  }
 
   const candidates = Object.values(materials)
     .filter(isMixedPartiallySeparable)
     .filter(matchesVisibleFilters);
+  const candidateIds = new Set(candidates.map(material => material.id));
+  mixedActionIds = new Set(candidateIds);
 
-  if (!candidates.length) return;
+  document.querySelectorAll('[data-mixed-separation-row]').forEach(row => {
+    if (!candidateIds.has(row.dataset.mixedSeparationRow)) row.remove();
+  });
+
+  if (!candidates.length) {
+    document.querySelectorAll('[data-mixed-separation-table]').forEach(table => table.remove());
+    restoreHiddenEmptyState();
+    lastPatchSignature = '';
+    return;
+  }
+
+  const search = document.querySelector('#materialSearch')?.value || '';
+  const category = document.querySelector('#categoryFilter')?.value || 'todas';
+  const statusFilter = document.querySelector('#statusFilter')?.value || 'todos';
+  const candidateState = candidates.map(material => {
+    const escapedId = selectorValue(material.id);
+    const customExists = Boolean(document.querySelector(`[data-mixed-separation-row="${escapedId}"]`));
+    const regularButton = document.querySelector(`[data-material-id="${escapedId}"]:not([data-mixed-separate])`);
+    return [
+      material.id,
+      quantityNumber(material, material.separatedQty),
+      separableQty(material),
+      customExists ? 1 : 0,
+      regularButton ? 1 : 0,
+      regularButton?.dataset.quickAction || ''
+    ].join(':');
+  }).join('|');
+  const signature = `${activeProjectId}|${search}|${category}|${statusFilter}|${candidateState}`;
+  if (signature === lastPatchSignature) return;
+  lastPatchSignature = signature;
 
   let tbody = document.querySelector('.data-table tbody');
-  const existingIds = new Set(
-    [...document.querySelectorAll('[data-material-id]')]
-      .map(element => element.dataset.materialId)
-      .filter(Boolean)
-  );
 
   candidates.forEach(material => {
-    mixedActionIds.add(material.id);
-    const existingButton = document.querySelector(`[data-material-id="${CSS.escape(material.id)}"]`);
-    if (existingButton) {
-      updateExistingRow(material, existingButton);
+    const escapedId = selectorValue(material.id);
+    const regularButton = document.querySelector(`[data-material-id="${escapedId}"]:not([data-mixed-separate])`);
+    const customRow = document.querySelector(`[data-mixed-separation-row="${escapedId}"]`);
+
+    if (regularButton) {
+      customRow?.remove();
+      updateExistingRow(material, regularButton);
       return;
     }
 
     if (!tbody) {
       const toolbar = document.querySelector('.toolbar');
       if (!toolbar) return;
-      const wrapper = document.createElement('div');
-      wrapper.className = 'table-wrap';
-      wrapper.dataset.mixedSeparationTable = 'true';
-      wrapper.innerHTML = `<table class="data-table"><thead><tr>
-        <th>Material</th><th>Categoria</th><th>Origem</th><th>Quantidade</th><th>Etapa atual</th><th>Previsão</th><th>Próxima ação</th><th class="right">Ações</th>
-      </tr></thead><tbody></tbody></table>`;
-      toolbar.insertAdjacentElement('afterend', wrapper);
-      const oldEmpty = wrapper.nextElementSibling;
-      if (oldEmpty?.classList.contains('card')) oldEmpty.hidden = true;
+      let wrapper = document.querySelector('[data-mixed-separation-table]');
+      if (!wrapper) {
+        wrapper = document.createElement('div');
+        wrapper.className = 'table-wrap';
+        wrapper.dataset.mixedSeparationTable = 'true';
+        wrapper.innerHTML = `<table class="data-table"><thead><tr>
+          <th>Material</th><th>Categoria</th><th>Origem</th><th>Quantidade</th><th>Etapa atual</th><th>Previsão</th><th>Próxima ação</th><th class="right">Ações</th>
+        </tr></thead><tbody></tbody></table>`;
+        toolbar.insertAdjacentElement('afterend', wrapper);
+        const oldEmpty = wrapper.nextElementSibling;
+        if (oldEmpty?.classList.contains('card')) {
+          oldEmpty.hidden = true;
+          oldEmpty.dataset.mixedHiddenEmpty = 'true';
+        }
+      }
       tbody = wrapper.querySelector('tbody');
     }
 
-    if (!existingIds.has(material.id)) {
-      tbody.insertAdjacentHTML('beforeend', rowForMaterial(material));
-      existingIds.add(material.id);
-    }
+    if (customRow) customRow.outerHTML = rowForMaterial(material);
+    else tbody.insertAdjacentHTML('beforeend', rowForMaterial(material));
   });
 
   const countBadge = document.querySelector('.toolbar .status-pill.status-neutral');
-  if (countBadge && tbody) {
-    countBadge.textContent = `${tbody.querySelectorAll('tr').length} item(ns)`;
+  const activeTbody = document.querySelector('.data-table tbody');
+  if (countBadge && activeTbody) {
+    countBadge.textContent = `${activeTbody.querySelectorAll('tr').length} item(ns)`;
   }
 }
 
@@ -206,6 +263,7 @@ function syncProjectListener() {
   activeProjectId = nextProjectId;
   materials = {};
   mixedActionIds = new Set();
+  lastPatchSignature = '';
 
   if (!activeProjectId) {
     queuePatch();
@@ -214,6 +272,7 @@ function syncProjectListener() {
 
   stopMaterials = onValue(ref(db, `materials/${activeProjectId}`), snapshot => {
     materials = snapshot.val() || {};
+    lastPatchSignature = '';
     queuePatch();
   }, error => {
     console.error('Falha ao acompanhar separação parcial de material misto:', error);
@@ -266,7 +325,8 @@ async function openMixedSeparation(materialId) {
 
   let material;
   try {
-    material = await readPath(`materials/${id}/${materialId}`, 'mixed-separation-open');
+    material = materials[materialId]
+      || await readPath(`materials/${id}/${materialId}`, 'mixed-separation-open');
   } catch (error) {
     showToast('Não foi possível confirmar os dados do material. Tente novamente.', 'error');
     return;
@@ -317,6 +377,8 @@ async function openMixedSeparation(materialId) {
     button.textContent = 'Salvando...';
 
     try {
+      // Reconfere o item antes de gravar para impedir uma separação acima da
+      // quantidade que continua fisicamente liberada naquele momento.
       const latest = await readPath(`materials/${id}/${materialId}`, 'mixed-separation-save');
       const latestSeparated = Math.max(0, quantityNumber(latest, latest.separatedQty));
       const latestLimit = separableQty(latest);
@@ -362,6 +424,10 @@ async function openMixedSeparation(materialId) {
 }
 
 document.addEventListener('click', event => {
+  if (event.target.closest?.('[data-route="separacao"]')) {
+    setTimeout(syncProjectListener, 60);
+  }
+
   const customButton = event.target.closest?.('[data-mixed-separate]');
   if (customButton) {
     event.preventDefault();
@@ -379,11 +445,15 @@ document.addEventListener('click', event => {
 }, true);
 
 document.addEventListener('input', event => {
-  if (event.target.matches?.('#materialSearch')) queuePatch();
+  if (event.target.matches?.('#materialSearch')) {
+    lastPatchSignature = '';
+    queuePatch();
+  }
 }, true);
 
 document.addEventListener('change', event => {
   if (event.target.matches?.('#categoryFilter, #statusFilter, #globalProjectSelect')) {
+    lastPatchSignature = '';
     if (event.target.matches('#globalProjectSelect')) setTimeout(syncProjectListener, 0);
     else queuePatch();
   }
@@ -393,10 +463,15 @@ window.addEventListener('hashchange', () => setTimeout(syncProjectListener, 0));
 window.addEventListener('obraflow:backend-path-synced', event => {
   if (!activeProjectId || event.detail?.path !== `materials/${activeProjectId}`) return;
   materials = event.detail.value || {};
+  lastPatchSignature = '';
   queuePatch();
 });
 
 const view = document.querySelector('#view');
-if (view) new MutationObserver(queuePatch).observe(view, { childList: true, subtree: true });
+if (view) new MutationObserver(() => {
+  const expectedProject = currentRoute() === 'separacao' ? projectId() : '';
+  if (expectedProject !== activeProjectId) syncProjectListener();
+  else queuePatch();
+}).observe(view, { childList: true, subtree: true });
 
 syncProjectListener();
