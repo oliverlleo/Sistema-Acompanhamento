@@ -16,10 +16,11 @@ const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
 
-const CRITICAL_PATHS = ['projects', 'materials'];
-const AUXILIARY_PATHS = ['projectSummaries', 'inventory'];
-const RETRY_DELAYS = [0, 350, 1000, 2500];
-const MIN_RECHECK_MS = 45_000;
+// A proteção nunca relê /materials inteiro. Com muitas obras isso seria caro.
+// Ela confere apenas estruturas leves e a obra ativa, quando houver.
+const LIGHT_PATHS = ['projects', 'projectSummaries'];
+const RETRY_DELAYS = [0, 400, 1200, 3000, 7000];
+const MIN_CONTEXT_RECHECK_MS = 60_000;
 
 let currentUser = null;
 let verificationInFlight = null;
@@ -40,66 +41,93 @@ function notify(name, detail = {}) {
   window.dispatchEvent(new CustomEvent(name, { detail }));
 }
 
-async function readPath(path) {
-  const snapshot = await get(ref(db, path));
-  return snapshot.val() || {};
+function currentProjectId() {
+  return localStorage.getItem('obraflow.currentProject') || '';
 }
 
-async function verifyOnce(reason) {
-  const criticalResults = await Promise.all(
-    CRITICAL_PATHS.map(async path => [path, await readPath(path)])
-  );
-
-  // Estas leituras atualizam o cache local do MESMO Firebase usado por todas
-  // as telas. Se algum listener tiver mostrado uma fotografia antiga ou
-  // incompleta, ele recebe a fotografia atual sem exigir F5.
-  const auxiliaryResults = await Promise.allSettled(
-    AUXILIARY_PATHS.map(async path => [path, await readPath(path)])
-  );
-
-  const snapshot = Object.fromEntries(criticalResults);
-  auxiliaryResults.forEach(result => {
-    if (result.status === 'fulfilled') snapshot[result.value[0]] = result.value[1];
-  });
-
-  lastVerifiedAt = Date.now();
-  window.ObraFlowBackendSnapshot = {
-    ...snapshot,
-    verifiedAt: lastVerifiedAt,
-    reason
-  };
-  notify('obraflow:backend-synced', { reason, verifiedAt: lastVerifiedAt });
-  return snapshot;
+function currentRoute() {
+  return location.hash.replace(/^#/, '') || 'dashboard';
 }
 
-async function verifyBackend(reason = 'automatic', { force = false } = {}) {
+function contextPaths() {
+  const paths = [...LIGHT_PATHS];
+  const projectId = currentProjectId();
+
+  if (projectId) {
+    paths.push(`materials/${projectId}`);
+    if (currentRoute() === 'materiais') paths.push(`activities/${projectId}`);
+  }
+
+  if (currentRoute() === 'usuarios') paths.push('users');
+  return [...new Set(paths)];
+}
+
+async function readPathWithRetry(path, reason) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt += 1) {
+    const delay = RETRY_DELAYS[attempt];
+    if (delay) await sleep(delay);
+    if (!currentUser) throw new Error('Sessão encerrada durante a sincronização.');
+
+    try {
+      const snapshot = await get(ref(db, path));
+      const value = snapshot.val() || {};
+      notify('obraflow:backend-path-synced', { path, reason, value });
+      return value;
+    } catch (error) {
+      lastError = error;
+      console.warn(
+        `Falha ao conferir ${path} no Firebase (tentativa ${attempt + 1}/${RETRY_DELAYS.length}):`,
+        error
+      );
+    }
+  }
+
+  throw lastError || new Error(`Não foi possível conferir ${path}.`);
+}
+
+async function verifyContext(reason = 'automatic', { force = false } = {}) {
   if (!currentUser) return false;
-  if (!force && Date.now() - lastVerifiedAt < MIN_RECHECK_MS) return true;
+  if (!force && Date.now() - lastVerifiedAt < MIN_CONTEXT_RECHECK_MS) return true;
   if (verificationInFlight) return verificationInFlight;
 
   verificationInFlight = (async () => {
-    let lastError = null;
+    const paths = contextPaths();
+    const results = await Promise.allSettled(
+      paths.map(async path => [path, await readPathWithRetry(path, reason)])
+    );
 
-    for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt += 1) {
-      const delay = RETRY_DELAYS[attempt];
-      if (delay) await sleep(delay);
-      if (!currentUser) return false;
+    const failures = results.filter(result => result.status === 'rejected');
+    const snapshot = {};
 
-      try {
-        await verifyOnce(reason);
-        return true;
-      } catch (error) {
-        lastError = error;
-        console.warn(`Falha na conferência do backend (tentativa ${attempt + 1}/${RETRY_DELAYS.length}):`, error);
-      }
+    results.forEach(result => {
+      if (result.status === 'fulfilled') snapshot[result.value[0]] = result.value[1];
+    });
+
+    if (failures.length) {
+      const error = failures[0].reason;
+      console.error('A conferência automática do backend não terminou por completo:', error);
+      notify('obraflow:backend-sync-failed', {
+        reason,
+        failedPaths: failures.length,
+        error: error?.message || String(error || '')
+      });
+      return false;
     }
 
-    console.error('Não foi possível confirmar os dados do Firebase após novas tentativas:', lastError);
-    notify('obraflow:backend-sync-failed', {
+    lastVerifiedAt = Date.now();
+    window.ObraFlowBackendSnapshot = {
+      paths: snapshot,
+      verifiedAt: lastVerifiedAt,
+      reason
+    };
+    notify('obraflow:backend-synced', {
       reason,
-      error: lastError?.message || String(lastError || '')
+      verifiedAt: lastVerifiedAt,
+      paths: Object.keys(snapshot)
     });
-    return false;
+    return true;
   })().finally(() => {
     verificationInFlight = null;
   });
@@ -110,11 +138,10 @@ async function verifyBackend(reason = 'automatic', { force = false } = {}) {
 function scheduleStartupChecks() {
   clearDelayedChecks();
 
-  // Confere duas vezes no início: uma logo após autenticar e outra depois que
-  // os listeners das telas já estiverem montados. Isso elimina a dependência
-  // da ordem em que projetos, materiais e resumos chegam do backend.
-  delayedChecks.push(setTimeout(() => verifyBackend('startup', { force: true }), 300));
-  delayedChecks.push(setTimeout(() => verifyBackend('startup-settled', { force: true }), 1800));
+  // A primeira confere após autenticar; a segunda pega módulos/listeners que
+  // terminaram de montar um pouco depois. Não existe polling contínuo.
+  delayedChecks.push(setTimeout(() => verifyContext('startup', { force: true }), 350));
+  delayedChecks.push(setTimeout(() => verifyContext('startup-settled', { force: true }), 2200));
 }
 
 function startConnectionWatch() {
@@ -122,11 +149,11 @@ function startConnectionWatch() {
   stopConnectionListener = onValue(ref(db, '.info/connected'), snapshot => {
     const connected = snapshot.val() === true;
     document.documentElement.dataset.backendConnected = connected ? 'true' : 'false';
+    notify('obraflow:backend-connection', { connected });
 
-    // O navegador pode dizer que está online antes do Firebase realmente
-    // reconectar. Esta confirmação usa o estado real da conexão do RTDB.
+    // Usa o estado real do RTDB, não apenas navigator.onLine.
     if (connected && currentUser) {
-      verifyBackend('firebase-reconnected', { force: true });
+      verifyContext('firebase-reconnected', { force: true });
     }
   }, error => {
     console.warn('Não foi possível acompanhar o estado da conexão com o Firebase:', error);
@@ -150,24 +177,24 @@ onAuthStateChanged(auth, user => {
 });
 
 window.addEventListener('online', () => {
-  if (currentUser) verifyBackend('browser-online', { force: true });
+  if (currentUser) verifyContext('browser-online', { force: true });
 });
 
 window.addEventListener('focus', () => {
-  if (currentUser) verifyBackend('window-focus');
+  if (currentUser) verifyContext('window-focus');
 });
 
 window.addEventListener('hashchange', () => {
-  if (currentUser) verifyBackend('route-change');
+  if (currentUser) verifyContext('route-change', { force: true });
 });
 
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && currentUser) verifyBackend('tab-visible');
+  if (!document.hidden && currentUser) verifyContext('tab-visible');
 });
 
-// Qualquer tela pode pedir uma conferência imediata sem recarregar a página.
 window.ObraFlowBackendGuard = {
-  verify: (reason = 'manual') => verifyBackend(reason, { force: true }),
+  verify: (reason = 'manual') => verifyContext(reason, { force: true }),
+  read: (path, reason = 'manual-read') => readPathWithRetry(path, reason),
   get lastVerifiedAt() {
     return lastVerifiedAt;
   }
