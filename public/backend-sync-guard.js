@@ -1,10 +1,18 @@
-import { getApps, getApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
+import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
 import { getDatabase, get, onValue, ref } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
 
-const app = getApps().length ? getApp() : null;
-if (!app) throw new Error('Firebase ainda não foi inicializado.');
+const firebaseConfig = {
+  apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
+  authDomain: 'sistemsquared.firebaseapp.com',
+  databaseURL: 'https://sistemsquared-default-rtdb.firebaseio.com',
+  projectId: 'sistemsquared',
+  storageBucket: 'sistemsquared.firebasestorage.app',
+  messagingSenderId: '43452051582',
+  appId: '1:43452051582:web:08a19296448eb66d0b282f'
+};
 
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
 
@@ -42,9 +50,9 @@ async function verifyOnce(reason) {
     CRITICAL_PATHS.map(async path => [path, await readPath(path)])
   );
 
-  // As leituras acima atualizam o cache local do mesmo Firebase usado pelos
-  // listeners das telas. Assim, qualquer listener que tenha recebido uma
-  // fotografia antiga recebe os dados atuais sem exigir F5.
+  // Estas leituras atualizam o cache local do MESMO Firebase usado por todas
+  // as telas. Se algum listener tiver mostrado uma fotografia antiga ou
+  // incompleta, ele recebe a fotografia atual sem exigir F5.
   const auxiliaryResults = await Promise.allSettled(
     AUXILIARY_PATHS.map(async path => [path, await readPath(path)])
   );
@@ -87,7 +95,10 @@ async function verifyBackend(reason = 'automatic', { force = false } = {}) {
     }
 
     console.error('Não foi possível confirmar os dados do Firebase após novas tentativas:', lastError);
-    notify('obraflow:backend-sync-failed', { reason, error: lastError?.message || String(lastError || '') });
+    notify('obraflow:backend-sync-failed', {
+      reason,
+      error: lastError?.message || String(lastError || '')
+    });
     return false;
   })().finally(() => {
     verificationInFlight = null;
@@ -98,9 +109,10 @@ async function verifyBackend(reason = 'automatic', { force = false } = {}) {
 
 function scheduleStartupChecks() {
   clearDelayedChecks();
-  // Uma conferência logo após o login e outra depois que todos os módulos e
-  // listeners tiveram tempo de iniciar evita aceitar uma primeira leitura
-  // incompleta ou antiga como estado definitivo da tela.
+
+  // Confere duas vezes no início: uma logo após autenticar e outra depois que
+  // os listeners das telas já estiverem montados. Isso elimina a dependência
+  // da ordem em que projetos, materiais e resumos chegam do backend.
   delayedChecks.push(setTimeout(() => verifyBackend('startup', { force: true }), 300));
   delayedChecks.push(setTimeout(() => verifyBackend('startup-settled', { force: true }), 1800));
 }
@@ -110,7 +122,12 @@ function startConnectionWatch() {
   stopConnectionListener = onValue(ref(db, '.info/connected'), snapshot => {
     const connected = snapshot.val() === true;
     document.documentElement.dataset.backendConnected = connected ? 'true' : 'false';
-    if (connected && currentUser) verifyBackend('firebase-reconnected', { force: true });
+
+    // O navegador pode dizer que está online antes do Firebase realmente
+    // reconectar. Esta confirmação usa o estado real da conexão do RTDB.
+    if (connected && currentUser) {
+      verifyBackend('firebase-reconnected', { force: true });
+    }
   }, error => {
     console.warn('Não foi possível acompanhar o estado da conexão com o Firebase:', error);
   });
@@ -140,11 +157,15 @@ window.addEventListener('focus', () => {
   if (currentUser) verifyBackend('window-focus');
 });
 
+window.addEventListener('hashchange', () => {
+  if (currentUser) verifyBackend('route-change');
+});
+
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && currentUser) verifyBackend('tab-visible');
 });
 
-// Permite que qualquer tela peça uma conferência sem recarregar a página.
+// Qualquer tela pode pedir uma conferência imediata sem recarregar a página.
 window.ObraFlowBackendGuard = {
   verify: (reason = 'manual') => verifyBackend(reason, { force: true }),
   get lastVerifiedAt() {
