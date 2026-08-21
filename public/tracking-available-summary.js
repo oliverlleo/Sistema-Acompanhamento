@@ -44,39 +44,36 @@ function quantitySummary() {
 
   materials.forEach(material => {
     const alloc = allocation(material);
-    const limit = alloc.required || Number.MAX_SAFE_INTEGER;
     const received = clamp(
       quantityNumber(material, material.qtyReceived),
       0,
       alloc.purchaseQty
     );
-    const sentToPainting = clamp(
-      quantityNumber(material, material.paintingSentQty),
-      0,
-      limit
-    );
-    const returnedFromPainting = clamp(
-      quantityNumber(material, material.paintingReturnedQty),
-      0,
-      sentToPainting || Number.MAX_SAFE_INTEGER
-    );
-    const deliveredToSite = clamp(
-      quantityNumber(material, material.siteDeliveredQty),
-      0,
-      limit
-    );
-    const awayAtPainting = Math.max(0, sentToPainting - returnedFromPainting);
 
-    // Única alteração: quantidade separada não entra no desconto.
-    const alreadyUnavailable = awayAtPainting + deliveredToSite;
-    const stockRemaining = Math.max(0, alloc.stockQty - alreadyUnavailable);
-    const usedBeyondStock = Math.max(0, alreadyUnavailable - alloc.stockQty);
-    const purchaseRemaining = Math.max(0, received - usedBeyondStock);
+    // Disponibilidade calculada por quantidade e por origem.
+    // Estoque já conta. Compra sem pintura conta quando recebida.
+    // Compra que precisa de pintura só conta quando retorna da pintura.
+    const stockAvailable = clamp(alloc.stockQty, 0, alloc.required);
+    let purchaseAvailable = received;
+
+    if (material.paintingRequired && alloc.purchaseQty > 0) {
+      purchaseAvailable = clamp(
+        quantityNumber(material, material.paintingReturnedQty),
+        0,
+        alloc.purchaseQty
+      );
+    }
+
+    const materialAvailable = clamp(
+      stockAvailable + purchaseAvailable,
+      0,
+      alloc.required
+    );
 
     totalRequiredQty += alloc.required;
-    availableQty += stockRemaining + purchaseRemaining;
+    availableQty += materialAvailable;
 
-    if (stockRemaining > 0) stockPendingItems += 1;
+    if (stockAvailable > 0) stockPendingItems += 1;
 
     if (alloc.purchaseQty > 0 && purchaseCommitted(material)) {
       purchasedItems += 1;
