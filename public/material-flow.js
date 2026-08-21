@@ -112,10 +112,31 @@ export function availableQty(material = {}) {
 }
 
 export function separableQty(material = {}) {
-  const { required } = allocation(material);
-  const available = availableQty(material);
-  if (!material.paintingRequired) return available;
-  return clamp(quantityNumber(material, material.paintingReturnedQty), 0, Math.min(required, available));
+  const { required, source, stockQty, purchaseQty } = allocation(material);
+  const received = receivedPurchaseQty(material);
+
+  if (!material.paintingRequired) {
+    return clamp(stockQty + received, 0, required);
+  }
+
+  // Em origem mista, a parcela que já está no estoque é independente da
+  // parcela comprada. Portanto ela pode ser separada imediatamente, enquanto
+  // apenas a parcela de compra aguarda/está na pintura.
+  if (source === 'misto') {
+    const purchaseReturnedFromPainting = clamp(
+      quantityNumber(material, material.paintingReturnedQty),
+      0,
+      Math.min(purchaseQty, received)
+    );
+    return clamp(stockQty + purchaseReturnedFromPainting, 0, required);
+  }
+
+  const available = clamp(stockQty + received, 0, required);
+  return clamp(
+    quantityNumber(material, material.paintingReturnedQty),
+    0,
+    Math.min(required, available)
+  );
 }
 
 export function committedQty(material = {}) {
@@ -134,11 +155,12 @@ export function purchaseNeedsAction(material = {}) {
 }
 
 export function deriveStatus(material = {}) {
-  const { required, stockQty, purchaseQty, unallocatedQty } = allocation(material);
+  const { required, source, stockQty, purchaseQty, unallocatedQty } = allocation(material);
   const delivered = clamp(quantityNumber(material, material.siteDeliveredQty), 0, required || Number.MAX_SAFE_INTEGER);
   const separated = clamp(quantityNumber(material, material.separatedQty), 0, required || Number.MAX_SAFE_INTEGER);
   const received = receivedPurchaseQty(material);
   const available = availableQty(material);
+  const separable = separableQty(material);
   const paintSent = clamp(quantityNumber(material, material.paintingSentQty), 0, available || Number.MAX_SAFE_INTEGER);
   const paintReturned = clamp(quantityNumber(material, material.paintingReturnedQty), 0, paintSent || Number.MAX_SAFE_INTEGER);
 
@@ -146,6 +168,10 @@ export function deriveStatus(material = {}) {
   if (delivered > 0) return 'enviado_parcial';
   if (required > 0 && separated >= required) return 'separado';
   if (separated > 0) return 'separado_parcial';
+
+  // Material misto pode ter uma parte pronta para separar enquanto a parcela
+  // de compra ainda está aguardando chegada ou pintura.
+  if (source === 'misto' && separable > separated) return 'pronto_separar';
 
   if (material.paintingRequired) {
     if (required > 0 && paintReturned >= required) return 'pronto_separar';
