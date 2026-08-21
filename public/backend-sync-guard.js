@@ -16,16 +16,16 @@ const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
 
-// A proteção nunca relê /materials inteiro. Com muitas obras isso seria caro.
-// Ela confere apenas estruturas leves, a obra ativa e poucas rotas usadas
-// recentemente pelas telas internas.
-const LIGHT_PATHS = ['projects', 'projectSummaries'];
-const RETRY_DELAYS = [0, 400, 1200, 3000, 7000];
+// A proteção nunca relê /materials inteiro. Ela trabalha somente com a obra
+// ativa e poucas rotas específicas usadas recentemente pelos painéis.
+const RETRY_DELAYS = [0, 500, 1500, 3500, 7500, 15_000];
 const MIN_CONTEXT_RECHECK_MS = 60_000;
 const WATCHED_PATH_TTL_MS = 10 * 60_000;
 const MAX_WATCHED_PATHS = 4;
 
 let currentUser = null;
+let firebaseConnected = false;
+let connectionKnown = false;
 let verificationInFlight = null;
 let lastVerifiedAt = 0;
 let stopConnectionListener = null;
@@ -80,15 +80,17 @@ function recentWatchedPaths() {
 }
 
 function contextPaths() {
-  const paths = [...LIGHT_PATHS, ...recentWatchedPaths()];
+  const paths = [...recentWatchedPaths()];
   const projectId = currentProjectId();
+  const route = currentRoute();
 
   if (projectId) {
     paths.push(`materials/${projectId}`);
-    if (currentRoute() === 'materiais') paths.push(`activities/${projectId}`);
+    if (route === 'materiais') paths.push(`activities/${projectId}`);
   }
 
-  if (currentRoute() === 'usuarios') paths.push('users');
+  // Usuários só é conferido quando a própria tela administrativa está aberta.
+  if (route === 'usuarios') paths.push('users');
   return [...new Set(paths)];
 }
 
@@ -100,6 +102,14 @@ async function readPathWithRetry(path, reason, { remember = true } = {}) {
     const delay = RETRY_DELAYS[attempt];
     if (delay) await sleep(delay);
     if (!currentUser) throw new Error('Sessão encerrada durante a sincronização.');
+
+    // get() pode recorrer ao cache local quando não existe conexão com o
+    // servidor. Para a conferência automática, isso NÃO é aceito como prova
+    // de que os dados do backend chegaram completos.
+    if (!connectionKnown || !firebaseConnected) {
+      lastError = new Error('Firebase ainda está reconectando ao servidor.');
+      continue;
+    }
 
     try {
       const snapshot = await get(ref(db, path));
@@ -125,6 +135,8 @@ async function verifyContext(reason = 'automatic', { force = false } = {}) {
 
   verificationInFlight = (async () => {
     const paths = contextPaths();
+    if (!paths.length) return true;
+
     const results = await Promise.allSettled(
       paths.map(async path => [
         path,
@@ -172,24 +184,28 @@ async function verifyContext(reason = 'automatic', { force = false } = {}) {
 function scheduleStartupChecks() {
   clearDelayedChecks();
 
-  // A primeira confere após autenticar; a segunda pega módulos/listeners que
-  // terminaram de montar um pouco depois. Não existe polling contínuo.
-  delayedChecks.push(setTimeout(() => verifyContext('startup', { force: true }), 350));
-  delayedChecks.push(setTimeout(() => verifyContext('startup-settled', { force: true }), 2200));
+  // Não existe polling contínuo: apenas uma conferência inicial e outra após
+  // os módulos terminarem de montar. Depois, só reconexão/foco ou leitura real.
+  delayedChecks.push(setTimeout(() => verifyContext('startup', { force: true }), 500));
+  delayedChecks.push(setTimeout(() => verifyContext('startup-settled', { force: true }), 2500));
 }
 
 function startConnectionWatch() {
   stopConnectionListener?.();
   stopConnectionListener = onValue(ref(db, '.info/connected'), snapshot => {
-    const connected = snapshot.val() === true;
-    document.documentElement.dataset.backendConnected = connected ? 'true' : 'false';
-    notify('obraflow:backend-connection', { connected });
+    connectionKnown = true;
+    firebaseConnected = snapshot.val() === true;
+    document.documentElement.dataset.backendConnected = firebaseConnected ? 'true' : 'false';
+    notify('obraflow:backend-connection', { connected: firebaseConnected });
 
-    // Usa o estado real do RTDB, não apenas navigator.onLine.
-    if (connected && currentUser) {
+    // Usa o estado real do RTDB, não apenas navigator.onLine. Quando volta,
+    // reconfere somente as rotas de dados que estavam em uso.
+    if (firebaseConnected && currentUser) {
       verifyContext('firebase-reconnected', { force: true });
     }
   }, error => {
+    connectionKnown = true;
+    firebaseConnected = false;
     console.warn('Não foi possível acompanhar o estado da conexão com o Firebase:', error);
   });
 }
@@ -199,6 +215,8 @@ onAuthStateChanged(auth, user => {
   clearDelayedChecks();
 
   if (!user) {
+    firebaseConnected = false;
+    connectionKnown = false;
     lastVerifiedAt = 0;
     watchedPaths.clear();
     window.ObraFlowBackendSnapshot = null;
@@ -220,7 +238,7 @@ window.addEventListener('focus', () => {
 });
 
 window.addEventListener('hashchange', () => {
-  if (currentUser) verifyContext('route-change', { force: true });
+  if (currentUser) verifyContext('route-change');
 });
 
 document.addEventListener('visibilitychange', () => {
@@ -230,6 +248,9 @@ document.addEventListener('visibilitychange', () => {
 window.ObraFlowBackendGuard = {
   verify: (reason = 'manual') => verifyContext(reason, { force: true }),
   read: (path, reason = 'manual-read') => readPathWithRetry(path, reason),
+  get connected() {
+    return connectionKnown && firebaseConnected;
+  },
   get lastVerifiedAt() {
     return lastVerifiedAt;
   }
