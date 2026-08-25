@@ -1,4 +1,4 @@
-const CACHE_NAME = 'obraflow-shell-v20260825-0728';
+const CACHE_NAME = 'obraflow-shell-v20260825-0733';
 const APP_SHELL = [
   './',
   './index.html',
@@ -6,6 +6,7 @@ const APP_SHELL = [
   './mobile-responsive.css',
   './sidebar-collapse.css',
   './table-horizontal-scroll.css',
+  './table-top-scroll.js',
   './manifest.webmanifest',
   './logo-obraflow.svg',
   './icon-192.svg',
