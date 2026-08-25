@@ -77,3 +77,46 @@
 #modalRoot .preview-table table {
   max-width: none;
 }
+
+/* Segunda barra acima da tabela, sincronizada com a barra inferior. */
+.table-scroll-top {
+  width: 100%;
+  max-width: 100%;
+  height: 18px;
+  margin: 0 0 6px;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: #98a2b3 #eef2f6;
+}
+
+.table-scroll-top[hidden] {
+  display: none !important;
+}
+
+.table-scroll-top-spacer {
+  height: 1px;
+  min-width: 100%;
+  pointer-events: none;
+}
+
+.table-scroll-top::-webkit-scrollbar {
+  height: 12px;
+}
+
+.table-scroll-top::-webkit-scrollbar-track {
+  background: #eef2f6;
+  border-radius: 999px;
+}
+
+.table-scroll-top::-webkit-scrollbar-thumb {
+  background: #98a2b3;
+  border: 3px solid #eef2f6;
+  border-radius: 999px;
+}
+
+.table-scroll-top::-webkit-scrollbar-thumb:hover {
+  background: #667085;
+}
