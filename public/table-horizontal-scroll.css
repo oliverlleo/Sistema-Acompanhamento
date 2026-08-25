@@ -1,0 +1,79 @@
+/* Rolagem horizontal consistente para tabelas em telas estreitas. */
+#view .table-wrap,
+#view [class*="table-wrap"],
+#view .preview-table,
+#modalRoot .table-wrap,
+#modalRoot [class*="table-wrap"],
+#modalRoot .preview-table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto !important;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: #98a2b3 #eef2f6;
+}
+
+#view .table-wrap::-webkit-scrollbar,
+#view [class*="table-wrap"]::-webkit-scrollbar,
+#view .preview-table::-webkit-scrollbar,
+#modalRoot .table-wrap::-webkit-scrollbar,
+#modalRoot [class*="table-wrap"]::-webkit-scrollbar,
+#modalRoot .preview-table::-webkit-scrollbar {
+  height: 12px;
+}
+
+#view .table-wrap::-webkit-scrollbar-track,
+#view [class*="table-wrap"]::-webkit-scrollbar-track,
+#view .preview-table::-webkit-scrollbar-track,
+#modalRoot .table-wrap::-webkit-scrollbar-track,
+#modalRoot [class*="table-wrap"]::-webkit-scrollbar-track,
+#modalRoot .preview-table::-webkit-scrollbar-track {
+  background: #eef2f6;
+  border-radius: 999px;
+}
+
+#view .table-wrap::-webkit-scrollbar-thumb,
+#view [class*="table-wrap"]::-webkit-scrollbar-thumb,
+#view .preview-table::-webkit-scrollbar-thumb,
+#modalRoot .table-wrap::-webkit-scrollbar-thumb,
+#modalRoot [class*="table-wrap"]::-webkit-scrollbar-thumb,
+#modalRoot .preview-table::-webkit-scrollbar-thumb {
+  background: #98a2b3;
+  border: 3px solid #eef2f6;
+  border-radius: 999px;
+}
+
+#view .table-wrap::-webkit-scrollbar-thumb:hover,
+#view [class*="table-wrap"]::-webkit-scrollbar-thumb:hover,
+#view .preview-table::-webkit-scrollbar-thumb:hover,
+#modalRoot .table-wrap::-webkit-scrollbar-thumb:hover,
+#modalRoot [class*="table-wrap"]::-webkit-scrollbar-thumb:hover,
+#modalRoot .preview-table::-webkit-scrollbar-thumb:hover {
+  background: #667085;
+}
+
+/* Em telas menores, reserva a barra mesmo antes do usuário começar a arrastar. */
+@media (max-width: 1400px) {
+  #view .table-wrap,
+  #view [class*="table-wrap"],
+  #view .preview-table,
+  #modalRoot .table-wrap,
+  #modalRoot [class*="table-wrap"],
+  #modalRoot .preview-table {
+    overflow-x: scroll !important;
+  }
+}
+
+/* A página não cresce para os lados: quem rola é somente a área da tabela. */
+#view .table-wrap > table,
+#view [class*="table-wrap"] table,
+#view .preview-table table,
+#modalRoot .table-wrap > table,
+#modalRoot [class*="table-wrap"] table,
+#modalRoot .preview-table table {
+  max-width: none;
+}
