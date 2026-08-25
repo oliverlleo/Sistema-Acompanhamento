@@ -21,6 +21,7 @@
   <link rel="stylesheet" href="./styles.css" />
   <link rel="stylesheet" href="./mobile-responsive.css?v=20260803-2347" />
   <link rel="stylesheet" href="./notification-layout-fix.css?v=20260804-1325" />
+  <link rel="stylesheet" href="./sidebar-collapse.css?v=20260825-0722" />
 </head>
 <body>
   <div id="offlineBanner" class="offline-banner" hidden>Sem conexão. Alterações serão enviadas quando a internet voltar.</div>
@@ -79,6 +80,7 @@
           <span><strong>ObraFlow</strong><small>Materiais e Compras</small></span>
         </div>
         <button id="closeSidebarBtn" class="icon-btn sidebar-close" aria-label="Fechar menu">×</button>
+        <button id="collapseSidebarBtn" class="sidebar-collapse-toggle" type="button" aria-label="Recolher menu lateral" aria-expanded="true" title="Recolher menu lateral">‹</button>
       </div>
 
       <nav id="mainNav" class="main-nav" aria-label="Navegação principal">
@@ -132,6 +134,7 @@
   <script src="./quantity-rounding-fix.js?v=20260804-1433"></script>
   <script src="./production-status-label.js?v=20260804-1444"></script>
   <script type="module" src="./app.js?v=20260818-1439"></script>
+  <script type="module" src="./sidebar-collapse.js?v=20260825-0722"></script>
   <script type="module" src="./bulk-source-choice-v2.js?v=20260803-0959"></script>
   <script type="module" src="./route-features.js?v=20260806-1200"></script>
   <script type="module" src="./pwa-install.js?v=20260804-0942"></script>
