@@ -32,6 +32,7 @@ let managerRole = false;
 let phaseFilter = 'todos';
 let projectQuery = '';
 let classificationSaving = false;
+let classificationEscapeHandler = null;
 const PROJECT_PHASES = [
   ['lista_inicial', 'Lista inicial'],
   ['producao', 'Produção / Andamento'],
@@ -500,6 +501,8 @@ function bindProjectSearch(view) {
 
 function closeClassificationDialog() {
   $('#trackingPhaseOverlay')?.remove();
+  if (classificationEscapeHandler) document.removeEventListener('keydown', classificationEscapeHandler);
+  classificationEscapeHandler = null;
 }
 
 function openClassificationDialog(projectId) {
@@ -520,9 +523,9 @@ function openClassificationDialog(projectId) {
     <div class="sep-phase-actions"><button type="button" data-phase-cancel>Cancelar</button><button type="submit" data-phase-save>Salvar classificação</button></div>
   </form>`;
   document.body.appendChild(overlay);
-  const escapeHandler = event => { if (event.key === 'Escape') close(); };
-  const close = () => { document.removeEventListener('keydown', escapeHandler); closeClassificationDialog(); };
-  document.addEventListener('keydown', escapeHandler);
+  const close = () => closeClassificationDialog();
+  classificationEscapeHandler = event => { if (event.key === 'Escape') close(); };
+  document.addEventListener('keydown', classificationEscapeHandler);
   overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
   $('[data-phase-cancel]', overlay).addEventListener('click', close);
   $('#trackingPhaseForm', overlay).addEventListener('submit', async event => {
@@ -804,6 +807,7 @@ onAuthStateChanged(auth, user => {
   if (user) {
     stopProfile = onValue(ref(db, `users/${user.uid}`), snapshot => {
       managerRole = snapshot.val()?.role === 'gerente' && snapshot.val()?.active === true;
+      if (!managerRole) closeClassificationDialog();
       if (currentRoute() === 'estoque' && !selectedProjectId) render();
     }, error => console.error('Falha ao consultar cargo para classificação de obras:', error));
     start();
