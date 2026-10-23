@@ -193,6 +193,7 @@ function buildEvents() {
       const description = String(material.description || '').trim() || 'Material sem descrição';
       const projectName = project.name || project.code || 'Obra sem nome';
       const projectCode = project.code || '';
+      const projectClient = String(project.client || '').trim();
 
       result.push({
         id: `${projectId}:${materialId}`,
@@ -200,6 +201,7 @@ function buildEvents() {
         materialId,
         projectName,
         projectCode,
+        projectClient,
         supplier,
         orderNumber,
         date,
@@ -257,6 +259,7 @@ function groupEvents(events) {
       projectId: event.projectId,
       projectName: event.projectName,
       projectCode: event.projectCode,
+      projectClient: event.projectClient,
       supplier: event.supplier,
       orderNumber: event.orderNumber,
       status: event.status,
@@ -511,6 +514,7 @@ function deliveryGroupHtml(group) {
     <header class="cal-delivery-head">
       <div class="cal-delivery-title"><strong>${escapeHtml(group.supplier)}</strong><span class="cal-status ${group.status}">${statusLabel(group.status)}</span></div>
       <div class="cal-delivery-meta">${escapeHtml(projectLabel)}${group.orderNumber ? ` · Pedido ${escapeHtml(group.orderNumber)}` : ' · Pedido não informado'}</div>
+      ${group.projectClient ? `<div class="cal-delivery-meta"><strong>Cliente:</strong> ${escapeHtml(group.projectClient)}</div>` : ''}
     </header>
     <div class="cal-items">${group.items.map(item => `
       <div class="cal-item">
