@@ -9,7 +9,8 @@ import './tracking-item-counts.js?v=20260821-1422';
 import './tracking-available-summary.js?v=20260821-1422';
 import './tracking-card-stock-count.js?v=20260803-1633';
 import './tracking-unresolved-stage.js?v=20260803-1933';
-import './tracking-card-availability.js?v=20260821-1409';
+// O card de Acompanhamento agora calcula Comprado, Recebido, Separado e Resolvido
+// diretamente em separated-projects.js. O módulo antigo sobrescrevia o donut.
 import './tracking-category-progress.js?v=20260821-1422';
 import './tracking-category-filter.js?v=20260804-1901';
 import './tracking-available-name.js?v=20260803-2208';
@@ -100,7 +101,7 @@ async function loadSeparatedProjectsFeature() {
   }
   loaded.separados = true;
   try {
-    await import('./separated-projects.js?v=20260803-1648');
+    await import('./separated-projects.js?v=20261023-etapas-reais1');
     window.ObraFlowSeparatedProjects?.render?.();
   } catch (error) {
     loaded.separados = false;
