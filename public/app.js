@@ -1155,7 +1155,8 @@ function bindMaterialTableActions(root) {
   $$('[data-edit-material]', root).forEach(btn => btn.addEventListener('click', () => openMaterialModal(btn.dataset.editMaterial, btn.dataset.projectId || state.currentProjectId)));
   $$('[data-delete-material]', root).forEach(btn => btn.addEventListener('click', async () => {
     const projectId = btn.dataset.projectId || state.currentProjectId;
-    const material = state.route === 'compras'
+    const acrossProjects = state.route === 'compras' || (state.route === 'separacao' && state.filters.separationAll);
+    const material = acrossProjects
       ? state.purchaseMaterials[projectId]?.[btn.dataset.deleteMaterial]
       : state.materials[btn.dataset.deleteMaterial];
     if (!material || !confirm(`Excluir “${material.description}”?`)) return;
@@ -1167,7 +1168,8 @@ function bindMaterialTableActions(root) {
   }));
   $$('[data-quick-action]', root).forEach(btn => btn.addEventListener('click', () => {
     const projectId = btn.dataset.projectId || state.currentProjectId;
-    const material = state.route === 'compras'
+    const acrossProjects = state.route === 'compras' || (state.route === 'separacao' && state.filters.separationAll);
+    const material = acrossProjects
       ? state.purchaseMaterials[projectId]?.[btn.dataset.materialId]
       : state.materials[btn.dataset.materialId];
     if (!material) return;
@@ -1183,7 +1185,8 @@ function openMaterialModal(materialId = '', projectId = state.currentProjectId) 
   }
   const project = state.projects[projectId];
   if (!project) { toast('Crie ou selecione uma obra antes de adicionar materiais.', 'error'); setRoute('obras'); return; }
-  const material = (state.route === 'compras' ? state.purchaseMaterials[projectId]?.[materialId] : state.materials[materialId]) || { source: 'compra', unit: 'un', priority: 'normal', paintingRequired: false };
+  const acrossProjects = state.route === 'compras' || (state.route === 'separacao' && state.filters.separationAll);
+  const material = (acrossProjects ? state.purchaseMaterials[projectId]?.[materialId] : state.materials[materialId]) || { source: 'compra', unit: 'un', priority: 'normal', paintingRequired: false };
   const paintingRequired = Boolean(material.paintingRequired);
   openModal({
     title: materialId ? 'Editar material' : 'Adicionar material',
