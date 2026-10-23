@@ -545,11 +545,24 @@ function startCoreListeners() {
 }
 
 function ensurePurchaseMaterialsListener() {
-  if (state.unsubs.purchaseMaterials) return;
-  state.unsubs.purchaseMaterials = onValue(ref(db, 'materials'), (snap) => {
-    state.purchaseMaterials = snap.val() || {};
-    if (state.route === 'compras') renderMaterialQueue('compras');
-  }, (error) => toast(authErrorMessage(error), 'error'));
+  if (state.unsubs.purchaseMaterials || state.purchaseListenerStarting) return;
+
+  // O Firebase pode disparar o primeiro onValue sincronamente, antes
+  // de atribuir a função de cancelamento. Sem essa proteção, a própria
+  // renderização registra outro onValue em um ciclo até estourar a pilha.
+  state.purchaseListenerStarting = true;
+  try {
+    state.unsubs.purchaseMaterials = onValue(ref(db, 'materials'), (snap) => {
+      state.purchaseMaterials = snap.val() || {};
+      if (state.route === 'compras') {
+        queueMicrotask(() => {
+          if (state.route === 'compras' && state.unsubs.purchaseMaterials) renderMaterialQueue('compras');
+        });
+      }
+    }, (error) => toast(authErrorMessage(error), 'error'));
+  } finally {
+    state.purchaseListenerStarting = false;
+  }
 }
 
 function listenProjectData(projectId) {
