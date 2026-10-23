@@ -15,6 +15,7 @@
 
   function decorateTable(table) {
     const headings = Array.from(table.tHead?.rows?.[0]?.cells || [], header => {
+      if (header.hasAttribute('data-bulk-header')) return 'Selecionar';
       const sortButton = header.querySelector('[data-purchase-sort]');
       return (sortButton?.textContent || header.textContent || '')
         .replace(/[↕↑↓]/g, '').replace(/\s+/g, ' ').trim();
