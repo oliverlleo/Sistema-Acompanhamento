@@ -140,6 +140,7 @@ const state = {
   inventory: {},
   users: {},
   filters: { search: '', status: 'todos', category: 'todas', purchaseProject: 'todas' },
+  purchaseSort: { key: '', direction: 'asc' },
   importer: {
     file: null, type: '', fileName: '', workbook: null, sheetNames: [], selectedSheet: '',
     matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: '',
@@ -904,16 +905,119 @@ function renderMaterialQueue(route) {
   $('#statusFilter')?.addEventListener('change', (e) => { state.filters.status = e.target.value; renderMaterialQueue(route); });
   $('#categoryFilter')?.addEventListener('change', (e) => { state.filters.category = e.target.value; renderMaterialQueue(route); });
   bindMaterialTableActions(view);
+  if (route === 'compras') bindPurchaseTableSorting(view);
 }
 
 function flowCard(label, value, tone) {
   return `<div class="flow-card ${tone}"><span>${escapeHtml(label)}</span><strong>${fmtQty(value)}</strong></div>`;
 }
 
+const PURCHASE_SORT_COLUMNS = [
+  ['material', 'Material'],
+  ['medidas', 'Medidas'],
+  ['obra', 'Obra'],
+  ['categoria', 'Categoria'],
+  ['origem', 'Origem'],
+  ['quantidade', 'Quantidade'],
+  ['etapa', 'Etapa atual'],
+  ['previsao', 'Previsão'],
+  ['proxima', 'Próxima ação'],
+  ['acoes', 'Ações']
+];
+
+function purchaseSortHeader(key, label) {
+  const active = state.purchaseSort.key === key;
+  const direction = state.purchaseSort.direction;
+  const icon = active ? (direction === 'asc' ? '↑' : '↓') : '↕';
+  const ariaSort = active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none';
+  return `<th scope="col" aria-sort="${ariaSort}"${key === 'acoes' ? ' class="right"' : ''}><button type="button" class="purchase-sort-button" data-purchase-sort="${key}" aria-label="Ordenar por ${escapeHtml(label)}">${escapeHtml(label)} <span class="purchase-sort-arrow" aria-hidden="true">${icon}</span></button></th>`;
+}
+
 function renderMaterialsTable(materials) {
-  return `<div class="table-wrap"><table class="data-table"><thead><tr>
-    <th>Material</th>${state.route === 'compras' ? '<th>Medidas</th>' : ''}<th>Categoria</th><th>Origem</th><th>Quantidade</th><th>Etapa atual</th><th>Previsão</th><th>Próxima ação</th><th class="right">Ações</th>
-  </tr></thead><tbody>${materials.map(materialRow).join('')}</tbody></table></div>`;
+  const headers = state.route === 'compras'
+    ? PURCHASE_SORT_COLUMNS.map(([key, label]) => purchaseSortHeader(key, label)).join('')
+    : '<th>Material</th><th>Categoria</th><th>Origem</th><th>Quantidade</th><th>Etapa atual</th><th>Previsão</th><th>Próxima ação</th><th class="right">Ações</th>';
+  return `<div class="table-wrap"><table class="data-table"><thead><tr>${headers}</tr></thead><tbody>${materials.map(materialRow).join('')}</tbody></table></div>`;
+}
+
+function purchaseSortValue(material, key) {
+  const allocation = materialAllocation(material);
+  const project = state.projects[material.projectId] || {};
+  switch (key) {
+    case 'material': return material.description || material.code || '';
+    case 'medidas': return purchaseMaterialMeasures(material);
+    case 'obra': return project.code ? `${project.code} - ${project.name || ''}` : project.name || '';
+    case 'categoria': return material.category || 'Sem categoria';
+    case 'origem': return allocation.source === 'misto' ? 'Compra + estoque' : allocation.source === 'compra' ? 'Compra' : allocation.source === 'estoque' ? 'Estoque' : 'Definir depois';
+    case 'quantidade': return allocation.purchaseQty;
+    case 'etapa': return statusMeta(material.status || deriveMaterialStatus(material)).label;
+    case 'previsao': return material.deliveryEta || '';
+    case 'proxima': return 'Registrar compra';
+    case 'acoes': return 'Editar';
+    default: return '';
+  }
+}
+
+function comparePurchaseSortValues(a, b, key) {
+  // Em datas não preenchidas, manter os itens sem previsão no final.
+  if (key === 'previsao' && (!a || !b)) return a ? -1 : b ? 1 : 0;
+  if (key === 'quantidade') return num(a) - num(b);
+  return String(a ?? '').localeCompare(String(b ?? ''), 'pt-BR', { numeric: true, sensitivity: 'base' });
+}
+
+function applyPurchaseTableSort(view) {
+  if (state.route !== 'compras') return;
+  const table = $('.data-table', view);
+  const key = state.purchaseSort.key;
+  const direction = state.purchaseSort.direction;
+  if (!table) return;
+
+  $$('[data-purchase-sort]', table).forEach(button => {
+    const selected = button.dataset.purchaseSort === key;
+    button.parentElement.setAttribute('aria-sort', selected ? (direction === 'asc' ? 'ascending' : 'descending') : 'none');
+    const arrow = $('.purchase-sort-arrow', button);
+    if (arrow) arrow.textContent = selected ? (direction === 'asc' ? '↑' : '↓') : '↕';
+  });
+
+  if (!key) return;
+  const tbody = table.tBodies?.[0];
+  if (!tbody || !tbody.rows.length) return;
+  const rows = [...tbody.rows];
+  rows.sort((a, b) => {
+    const getMaterial = row => {
+      const button = $('[data-material-id][data-project-id]', row);
+      return state.purchaseMaterials[button?.dataset.projectId]?.[button?.dataset.materialId] || null;
+    };
+    const itemA = getMaterial(a);
+    const itemB = getMaterial(b);
+    if (!itemA || !itemB) return 0;
+    const aValue = purchaseSortValue({ ...itemA, projectId: a.dataset.projectId }, key);
+    const bValue = purchaseSortValue({ ...itemB, projectId: b.dataset.projectId }, key);
+    const primary = comparePurchaseSortValues(aValue, bValue, key);
+    if (primary !== 0) return key === 'previsao' && (!aValue || !bValue) ? primary : primary * (direction === 'asc' ? 1 : -1);
+    const byMaterial = comparePurchaseSortValues(itemA.description || '', itemB.description || '', 'material');
+    if (byMaterial) return byMaterial * (direction === 'asc' ? 1 : -1);
+    const byProject = comparePurchaseSortValues(a.dataset.projectId, b.dataset.projectId, 'obra');
+    return byProject * (direction === 'asc' ? 1 : -1);
+  });
+  // Reordena as linhas existentes, sem refazer a tabela: preserva os checkboxes
+  // e os eventos dos botões de compra, edição e exclusão.
+  tbody.append(...rows);
+}
+
+function bindPurchaseTableSorting(view) {
+  if (state.route !== 'compras') return;
+  $$('[data-purchase-sort]', view).forEach(button => {
+    button.addEventListener('click', () => {
+      const key = button.dataset.purchaseSort;
+      state.purchaseSort = {
+        key,
+        direction: state.purchaseSort.key === key && state.purchaseSort.direction === 'asc' ? 'desc' : 'asc'
+      };
+      applyPurchaseTableSort(view);
+    });
+  });
+  applyPurchaseTableSort(view);
 }
 
 function purchaseMaterialMeasures(material) {
@@ -996,8 +1100,8 @@ function materialRow(material) {
   const purchaseProject = state.projects[material.projectId] || {};
   const projectLabel = purchaseProject.code ? `${purchaseProject.code} - ${purchaseProject.name}` : purchaseProject.name || 'Obra não encontrada';
   return `<tr data-project-id="${escapeHtml(material.projectId || state.currentProjectId)}">
-    <td><span class="cell-main">${escapeHtml(material.description || 'Sem descrição')}</span><span class="cell-sub">${escapeHtml([material.code, material.type, material.color].filter(Boolean).join(' · ') || 'Sem código')}</span>${state.route === 'compras' ? `<span class="cell-sub">Obra: ${escapeHtml(projectLabel)}</span>` : ''}</td>
-    ${state.route === 'compras' ? `<td data-queue-measures-cell class="nowrap"><span class="cell-main">${escapeHtml(purchaseMaterialMeasures(material))}</span>${material.color ? `<span class="cell-sub">${escapeHtml(material.color)}</span>` : ''}</td>` : ''}
+    <td><span class="cell-main">${escapeHtml(material.description || 'Sem descrição')}</span><span class="cell-sub">${escapeHtml([material.code, material.type, material.color].filter(Boolean).join(' · ') || 'Sem código')}</span></td>
+    ${state.route === 'compras' ? `<td data-queue-measures-cell class="nowrap"><span class="cell-main">${escapeHtml(purchaseMaterialMeasures(material))}</span>${material.color ? `<span class="cell-sub">${escapeHtml(material.color)}</span>` : ''}</td><td>${escapeHtml(projectLabel)}</td>` : ''}
     <td>${escapeHtml(material.category || 'Sem categoria')}</td>
     <td><span class="status-pill status-${sourceTone}">${sourceLabel}</span>${allocationNote ? `<span class="cell-sub">${escapeHtml(allocationNote)}</span>` : ''}${material.paintingRequired ? '<span class="cell-sub">com pintura</span>' : ''}</td>
     <td class="qty-cell"><strong>${fmtQty(currentQty)} / ${fmtQty(requiredQty)} ${escapeHtml(material.unit || 'un')}</strong><div class="qty-track"><span style="width:${pct}%"></span></div>${quantityNote ? `<span class="cell-sub">${escapeHtml(quantityNote)}</span>` : ''}</td>
