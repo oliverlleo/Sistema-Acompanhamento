@@ -101,7 +101,7 @@ async function loadSeparatedProjectsFeature() {
   }
   loaded.separados = true;
   try {
-    await import('./separated-projects.js?v=20261023-etapas-reais1');
+    await import('./separated-projects.js?v=20261023-classificacao-gerente1');
     window.ObraFlowSeparatedProjects?.render?.();
   } catch (error) {
     loaded.separados = false;
