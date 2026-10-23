@@ -963,7 +963,7 @@ function renderActivityCard() {
 }
 
 function bindMaterialTableActions(root) {
-  $('[data-edit-material]', root).forEach(btn => btn.addEventListener('click', () => openMaterialModal(btn.dataset.editMaterial, btn.dataset.projectId || state.currentProjectId)));
+  $$('[data-edit-material]', root).forEach(btn => btn.addEventListener('click', () => openMaterialModal(btn.dataset.editMaterial, btn.dataset.projectId || state.currentProjectId)));
   $$('[data-delete-material]', root).forEach(btn => btn.addEventListener('click', async () => {
     const projectId = btn.dataset.projectId || state.currentProjectId;
     const material = state.route === 'compras'
