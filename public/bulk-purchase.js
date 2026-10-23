@@ -43,7 +43,7 @@ function currentProjectId() {
 }
 
 function selectedIds(root) {
-  return $('[data-bulk-purchase-item]:checked', root).map(input => ({
+  return $$('[data-bulk-purchase-item]:checked', root).map(input => ({
     materialId: input.dataset.bulkPurchaseItem,
     projectId: input.dataset.projectId
   })).filter(item => item.materialId && item.projectId);
