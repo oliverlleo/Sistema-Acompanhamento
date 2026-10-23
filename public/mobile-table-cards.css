@@ -124,6 +124,19 @@
     padding-bottom:12px!important;
     margin-bottom:3px;
   }
+  /* Na fila de Compras a primeira célula pode ser o checkbox do lote. */
+  #view .table-wrap:not(.preview-table)>table.data-table tbody>tr:has(>td[data-bulk-cell])>td:nth-child(2){
+    grid-column:1/-1;
+    border-bottom:1px solid #e8edf1!important;
+  }
+  #view .data-table td[data-bulk-cell]{
+    padding:5px 4px!important;
+  }
+  #view .data-table td[data-bulk-cell] input[type="checkbox"]{
+    width:19px;
+    height:19px;
+    accent-color:#0f766e;
+  }
   #view .gr-table-wrap>table.gr-table tbody>tr>td:nth-child(2){
     grid-column:1/-1;
     border-bottom:1px solid #e8edf1!important;
