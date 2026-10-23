@@ -837,7 +837,30 @@ function renderMaterialQueue(route) {
 
   const all = route === 'compras' ? allPurchaseMaterials() : currentMaterials();
   const materials = filteredMaterials(route);
-  const summary = state.summaries[state.currentProjectId] || {};
+  const purchaseProjectId = state.filters.purchaseProject;
+  const purchaseProject = route === 'compras' && purchaseProjectId !== 'todas'
+    ? state.projects[purchaseProjectId] || null : null;
+  const summary = route === 'compras'
+    ? Object.keys(state.projects)
+      .filter(id => purchaseProjectId === 'todas' || id === purchaseProjectId)
+      .reduce((total, id) => {
+        const item = state.summaries[id] || {};
+        ['total', 'completed', 'pending', 'definirOrigem', 'comprar', 'aguardandoEntrega', 'comprasAtrasadas', 'pintura', 'pinturaAtrasada', 'separar']
+          .forEach(key => { total[key] = num(total[key]) + num(item[key]); });
+        return total;
+      }, {})
+    : state.summaries[state.currentProjectId] || {};
+  if (route === 'compras') {
+    summary.progress = purchaseProject
+      ? num(state.summaries[purchaseProjectId]?.progress)
+      : (num(summary.total) ? Math.round(num(summary.completed) / num(summary.total) * 100) : 0);
+  }
+  const heroProject = route === 'compras' ? purchaseProject : project;
+  const heroCode = route === 'compras' && !purchaseProject ? 'TODAS AS OBRAS' : `OBRA ${heroProject?.code || ''}`;
+  const heroName = route === 'compras' && !purchaseProject ? 'Todas as obras' : heroProject?.name || '';
+  const heroDescription = route === 'compras' && !purchaseProject
+    ? `${Object.keys(state.projects).length} obra(s) no acompanhamento`
+    : `${heroProject?.client || heroProject?.address || 'Sem cliente/local informado'} · Prazo ${fmtDate(heroProject?.deadline)}`;
   const categories = [...new Set(all.map(m => m.category || 'Sem categoria'))].sort();
   const routeCopy = {
     materiais: ['Todos os materiais', 'Acompanhe cada item desde a origem até o envio para a obra.'],
@@ -848,9 +871,8 @@ function renderMaterialQueue(route) {
   }[route];
 
   view.innerHTML = `
-    ${route === 'compras' ? '' : `
     <section class="detail-hero">
-      <div><span class="project-code">OBRA ${escapeHtml(project.code || '')}</span><h2>${escapeHtml(project.name)}</h2><p>${escapeHtml(project.client || project.address || 'Sem cliente/local informado')} · Prazo ${fmtDate(project.deadline)}</p></div>
+      <div><span class="project-code">${escapeHtml(heroCode)}</span><h2>${escapeHtml(heroName)}</h2><p>${escapeHtml(heroDescription)}</p></div>
       <div class="detail-score" style="--pct:${clamp(num(summary.progress), 0, 100)}%"><span>${num(summary.progress)}%</span></div>
     </section>
     <section class="flow-strip">
@@ -860,9 +882,9 @@ function renderMaterialQueue(route) {
       ${flowCard('Em pintura', num(summary.pintura), '')}
       ${flowCard('Pintura atrasada', num(summary.pinturaAtrasada), num(summary.pinturaAtrasada) ? 'danger' : '')}
       ${flowCard('Pronto para separar', num(summary.separar), num(summary.separar) ? 'warning' : '')}
-    </section>`}
+    </section>
     <div class="page-head">
-      <div><h2>${routeCopy[0]}</h2><p>${route === 'compras' ? 'Compras pendentes de todas as obras. Use os filtros para selecionar uma obra; novos materiais e importações usam a obra ativa no topo.' : routeCopy[1]}</p></div>
+      <div><h2>${routeCopy[0]}</h2><p>${routeCopy[1]}</p></div>
       <div class="page-actions"><button class="btn btn-ghost" data-action="import">⇧ Importar</button><button class="btn btn-primary" data-action="new-material">+ Material</button></div>
     </div>
     <div class="toolbar">
@@ -890,7 +912,7 @@ function flowCard(label, value, tone) {
 
 function renderMaterialsTable(materials) {
   return `<div class="table-wrap"><table class="data-table"><thead><tr>
-    <th>Material</th>${state.route === 'compras' ? '<th>Medidas</th><th>Obra</th>' : ''}<th>Categoria</th><th>Origem</th><th>Quantidade</th><th>Etapa atual</th><th>Previsão</th><th>Próxima ação</th><th class="right">Ações</th>
+    <th>Material</th>${state.route === 'compras' ? '<th>Medidas</th>' : ''}<th>Categoria</th><th>Origem</th><th>Quantidade</th><th>Etapa atual</th><th>Previsão</th><th>Próxima ação</th><th class="right">Ações</th>
   </tr></thead><tbody>${materials.map(materialRow).join('')}</tbody></table></div>`;
 }
 
@@ -974,8 +996,8 @@ function materialRow(material) {
   const purchaseProject = state.projects[material.projectId] || {};
   const projectLabel = purchaseProject.code ? `${purchaseProject.code} - ${purchaseProject.name}` : purchaseProject.name || 'Obra não encontrada';
   return `<tr data-project-id="${escapeHtml(material.projectId || state.currentProjectId)}">
-    <td><span class="cell-main">${escapeHtml(material.description || 'Sem descrição')}</span><span class="cell-sub">${escapeHtml([material.code, material.type, material.color].filter(Boolean).join(' · ') || 'Sem código')}</span></td>
-    ${state.route === 'compras' ? `<td data-queue-measures-cell class="nowrap"><span class="cell-main">${escapeHtml(purchaseMaterialMeasures(material))}</span>${material.color ? `<span class="cell-sub">${escapeHtml(material.color)}</span>` : ''}</td><td><span class="cell-main">${escapeHtml(projectLabel)}</span></td>` : ''}
+    <td><span class="cell-main">${escapeHtml(material.description || 'Sem descrição')}</span><span class="cell-sub">${escapeHtml([material.code, material.type, material.color].filter(Boolean).join(' · ') || 'Sem código')}</span>${state.route === 'compras' ? `<span class="cell-sub">Obra: ${escapeHtml(projectLabel)}</span>` : ''}</td>
+    ${state.route === 'compras' ? `<td data-queue-measures-cell class="nowrap"><span class="cell-main">${escapeHtml(purchaseMaterialMeasures(material))}</span>${material.color ? `<span class="cell-sub">${escapeHtml(material.color)}</span>` : ''}</td>` : ''}
     <td>${escapeHtml(material.category || 'Sem categoria')}</td>
     <td><span class="status-pill status-${sourceTone}">${sourceLabel}</span>${allocationNote ? `<span class="cell-sub">${escapeHtml(allocationNote)}</span>` : ''}${material.paintingRequired ? '<span class="cell-sub">com pintura</span>' : ''}</td>
     <td class="qty-cell"><strong>${fmtQty(currentQty)} / ${fmtQty(requiredQty)} ${escapeHtml(material.unit || 'un')}</strong><div class="qty-track"><span style="width:${pct}%"></span></div>${quantityNote ? `<span class="cell-sub">${escapeHtml(quantityNote)}</span>` : ''}</td>
