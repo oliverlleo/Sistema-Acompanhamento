@@ -86,7 +86,7 @@ async function loadPurchaseExcelFeature() {
   if (loaded.excelCompras) return;
   loaded.excelCompras = true;
   try {
-    await import('./purchase-excel-export.js?v=20261023-1');
+    await import('./purchase-excel-export.js?v=20261023-fix2');
   } catch (error) {
     loaded.excelCompras = false;
     console.error('Falha ao carregar exportação da lista de compra:', error);
@@ -140,7 +140,7 @@ async function loadRouteFeature() {
     if (!loaded.compras) {
       loaded.compras = true;
       try {
-        await import('./bulk-purchase.js?v=20261023-1');
+        await import('./bulk-purchase.js?v=20261023-fix2');
       } catch (error) {
         loaded.compras = false;
         console.error('Falha ao carregar compra em lote:', error);
