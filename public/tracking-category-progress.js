@@ -154,6 +154,7 @@ async function loadProject(id) {
 }
 
 document.addEventListener('click', event => {
+  if (event.target.closest?.('[data-classify-project]')) return;
   const card = event.target.closest?.('[data-separated-project]');
   if (card && currentRoute() === 'estoque') {
     loadProject(card.dataset.separatedProject || '');
@@ -172,6 +173,7 @@ document.addEventListener('click', event => {
 }, true);
 
 document.addEventListener('keydown', event => {
+  if (event.target.closest?.('[data-classify-project]')) return;
   const card = event.target.closest?.('[data-separated-project]');
   if (card && currentRoute() === 'estoque' && (event.key === 'Enter' || event.key === ' ')) {
     loadProject(card.dataset.separatedProject || '');
