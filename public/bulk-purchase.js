@@ -43,7 +43,10 @@ function currentProjectId() {
 }
 
 function selectedIds(root) {
-  return $$('[data-bulk-purchase-item]:checked', root).map(input => input.dataset.bulkPurchaseItem);
+  return $('[data-bulk-purchase-item]:checked', root).map(input => ({
+    materialId: input.dataset.bulkPurchaseItem,
+    projectId: input.dataset.projectId
+  })).filter(item => item.materialId && item.projectId);
 }
 
 function syncBulkButton(root) {
@@ -125,6 +128,7 @@ function injectBulkPurchaseUi() {
       const input = document.createElement('input');
       input.type = 'checkbox';
       input.dataset.bulkPurchaseItem = purchaseButton.dataset.materialId;
+      input.dataset.projectId = purchaseButton.dataset.projectId;
       input.setAttribute('aria-label', 'Selecionar item para compra em lote');
       cell.appendChild(input);
     }
@@ -187,10 +191,9 @@ function openBulkPurchaseModal(materialIds) {
     const form = $('#bulkPurchaseForm', modalRoot);
     if (!form?.reportValidity()) return;
 
-    const projectId = currentProjectId();
     const user = auth.currentUser;
-    if (!projectId || !user) {
-      toast(!projectId ? 'Selecione uma obra antes de registrar a compra.' : 'Sua sessão expirou. Entre novamente.', 'error');
+    if (!user) {
+      toast('Sua sessão expirou. Entre novamente.', 'error');
       return;
     }
 
@@ -203,8 +206,9 @@ function openBulkPurchaseModal(materialIds) {
       const data = Object.fromEntries(new FormData(form).entries());
       const updates = {};
       let updatedCount = 0;
+      const updatedByProject = new Map();
 
-      for (const materialId of materialIds) {
+      for (const { projectId, materialId } of materialIds) {
         const snapshot = await get(ref(db, `materials/${projectId}/${materialId}`));
         if (!snapshot.exists()) continue;
         const material = snapshot.val();
@@ -221,21 +225,24 @@ function openBulkPurchaseModal(materialIds) {
         updates[`${basePath}/updatedAt`] = merged.updatedAt;
         updates[`${basePath}/updatedBy`] = user.uid;
         updatedCount += 1;
+        updatedByProject.set(projectId, (updatedByProject.get(projectId) || 0) + 1);
       }
 
       if (!updatedCount) throw new Error('Nenhum item selecionado ainda precisava de compra.');
 
       await update(ref(db), updates);
-      const activityRef = push(ref(db, `activities/${projectId}`));
-      await set(activityRef, {
-        type: 'compra_em_lote',
-        message: `Compra registrada para ${updatedCount} item(ns) · ${data.supplier}`,
-        materialId: '',
-        userId: user.uid,
-        userName: user.email || 'Usuário',
-        createdAt: Date.now()
-      });
-      await recalculateProjectSummary(projectId);
+      for (const [projectId, count] of updatedByProject) {
+        const activityRef = push(ref(db, `activities/${projectId}`));
+        await set(activityRef, {
+          type: 'compra_em_lote',
+          message: `Compra registrada para ${count} item(ns) · ${data.supplier}`,
+          materialId: '',
+          userId: user.uid,
+          userName: user.email || 'Usuário',
+          createdAt: Date.now()
+        });
+        await recalculateProjectSummary(projectId);
+      }
 
       closeBulkModal();
       toast(`Compra registrada para ${updatedCount} item(ns).`);
