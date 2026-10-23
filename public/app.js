@@ -492,16 +492,32 @@ onAuthStateChanged(auth, async (user) => {
       return;
     }
 
-    $('#authScreen').hidden = true;
-    $('#appShell').hidden = false;
+  } catch (error) {
+    // Somente falhas na autenticação ou no carregamento do perfil devem exibir o login.
+    $('#authScreen').hidden = false;
+    $('#appShell').hidden = true;
+    $('#authMessage').textContent = authErrorMessage(error);
+    return;
+  }
+
+  // O usuário já está autenticado. Erros de renderização não devem voltar ao login.
+  $('#authScreen').hidden = true;
+  $('#appShell').hidden = false;
+  try {
     updateUserUI();
     startCoreListeners();
     const hashRoute = location.hash.replace('#', '');
     setRoute(ROUTES[hashRoute] ? hashRoute : 'dashboard');
   } catch (error) {
-    $('#authScreen').hidden = false;
-    $('#appShell').hidden = true;
-    $('#authMessage').textContent = authErrorMessage(error);
+    console.error('Erro ao abrir o sistema após autenticação:', error);
+    // Recuperação segura: manter a sessão e voltar ao painel inicial.
+    try {
+      setRoute('dashboard');
+    } catch (dashboardError) {
+      console.error('Erro ao abrir o painel após autenticação:', dashboardError);
+      $('#view').innerHTML = '<div class="card"><p>Login realizado. Não foi possível carregar o painel; atualize a página.</p></div>';
+    }
+    toast('Login realizado, mas ocorreu um erro ao carregar a tela. A sessão foi mantida.', 'error');
   }
 });
 
