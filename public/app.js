@@ -861,8 +861,23 @@ function flowCard(label, value, tone) {
 
 function renderMaterialsTable(materials) {
   return `<div class="table-wrap"><table class="data-table"><thead><tr>
-    <th>Material</th><th>Categoria</th><th>Origem</th><th>Quantidade</th><th>Etapa atual</th><th>Previsão</th><th>Próxima ação</th><th class="right">Ações</th>
+    <th>Material</th>${state.route === 'compras' ? '<th>Medidas</th><th>Obra</th>' : ''}<th>Categoria</th><th>Origem</th><th>Quantidade</th><th>Etapa atual</th><th>Previsão</th><th>Próxima ação</th><th class="right">Ações</th>
   </tr></thead><tbody>${materials.map(materialRow).join('')}</tbody></table></div>`;
+}
+
+function purchaseMaterialMeasures(material) {
+  const first = (...values) => values.find(value => value !== undefined && value !== null && String(value).trim() !== '');
+  const explicit = first(material.dimensions, material.medidas, material.measurements);
+  if (explicit) return String(explicit);
+  const details = material.sourceDetails || {};
+  const parts = [
+    first(material.width, material.largura, details.LARGURA, details.L),
+    first(material.height, material.altura, details.ALTURA, details.A, details.H),
+    first(material.length, material.comprimento, material.medida, details.COMPRIMENTO, details.MEDIDA)
+  ].filter(value => value !== undefined);
+  if (parts.length) return parts.join(' × ');
+  const area = first(material.area, material.areaM2, material.m2, details.AREA, details.M2_COMPRA, details.M2_CORTE);
+  return area === undefined ? '—' : `${area} m²`;
 }
 
 function materialRow(material) {
@@ -927,15 +942,18 @@ function materialRow(material) {
     ? `${fmtQty(quantityNum(allocation, allocation.stockQty))} estoque + ${fmtQty(quantityNum(allocation, allocation.purchaseQty))} compra`
     : '';
 
-  return `<tr>
+  const purchaseProject = state.projects[material.projectId] || {};
+  const projectLabel = purchaseProject.code ? `${purchaseProject.code} - ${purchaseProject.name}` : purchaseProject.name || 'Obra não encontrada';
+  return `<tr data-project-id="${escapeHtml(material.projectId || state.currentProjectId)}">
     <td><span class="cell-main">${escapeHtml(material.description || 'Sem descrição')}</span><span class="cell-sub">${escapeHtml([material.code, material.type, material.color].filter(Boolean).join(' · ') || 'Sem código')}</span></td>
+    ${state.route === 'compras' ? `<td data-queue-measures-cell class="nowrap"><span class="cell-main">${escapeHtml(purchaseMaterialMeasures(material))}</span>${material.color ? `<span class="cell-sub">${escapeHtml(material.color)}</span>` : ''}</td><td><span class="cell-main">${escapeHtml(projectLabel)}</span></td>` : ''}
     <td>${escapeHtml(material.category || 'Sem categoria')}</td>
     <td><span class="status-pill status-${sourceTone}">${sourceLabel}</span>${allocationNote ? `<span class="cell-sub">${escapeHtml(allocationNote)}</span>` : ''}${material.paintingRequired ? '<span class="cell-sub">com pintura</span>' : ''}</td>
     <td class="qty-cell"><strong>${fmtQty(currentQty)} / ${fmtQty(requiredQty)} ${escapeHtml(material.unit || 'un')}</strong><div class="qty-track"><span style="width:${pct}%"></span></div>${quantityNote ? `<span class="cell-sub">${escapeHtml(quantityNote)}</span>` : ''}</td>
     <td>${statusPill(status)}</td>
     <td class="nowrap">${fmtDate(eta)}${eta && isPast(eta) && !['enviado_obra', 'separado'].includes(status) ? '<span class="cell-sub" style="color:var(--danger)">prazo vencido</span>' : ''}</td>
-    <td><button class="btn ${action === 'view' ? 'btn-ghost' : 'btn-secondary'} btn-sm" data-quick-action="${action}" data-material-id="${material.id}">${escapeHtml(actionLabel)}</button></td>
-    <td><div class="cell-actions"><button class="btn btn-ghost btn-sm" data-edit-material="${material.id}">Editar</button>${isManager() ? `<button class="btn btn-danger btn-sm" data-delete-material="${material.id}">×</button>` : ''}</div></td>
+    <td><button class="btn ${action === 'view' ? 'btn-ghost' : 'btn-secondary'} btn-sm" data-quick-action="${action}" data-project-id="${escapeHtml(material.projectId || state.currentProjectId)}" data-material-id="${escapeHtml(material.id)}">${escapeHtml(actionLabel)}</button></td>
+    <td><div class="cell-actions"><button class="btn btn-ghost btn-sm" data-edit-material="${escapeHtml(material.id)}" data-project-id="${escapeHtml(material.projectId || state.currentProjectId)}">Editar</button>${isManager() ? `<button class="btn btn-danger btn-sm" data-delete-material="${escapeHtml(material.id)}" data-project-id="${escapeHtml(material.projectId || state.currentProjectId)}">×</button>` : ''}</div></td>
   </tr>`;
 }
 
@@ -945,28 +963,34 @@ function renderActivityCard() {
 }
 
 function bindMaterialTableActions(root) {
-  $$('[data-edit-material]', root).forEach(btn => btn.addEventListener('click', () => openMaterialModal(btn.dataset.editMaterial)));
+  $('[data-edit-material]', root).forEach(btn => btn.addEventListener('click', () => openMaterialModal(btn.dataset.editMaterial, btn.dataset.projectId || state.currentProjectId)));
   $$('[data-delete-material]', root).forEach(btn => btn.addEventListener('click', async () => {
-    const material = state.materials[btn.dataset.deleteMaterial];
+    const projectId = btn.dataset.projectId || state.currentProjectId;
+    const material = state.route === 'compras'
+      ? state.purchaseMaterials[projectId]?.[btn.dataset.deleteMaterial]
+      : state.materials[btn.dataset.deleteMaterial];
     if (!material || !confirm(`Excluir “${material.description}”?`)) return;
     try {
-      await remove(ref(db, `materials/${state.currentProjectId}/${material.id}`));
-      await logActivity(state.currentProjectId, 'material_excluido', `Material excluído: ${material.description}`, material.id);
-      await recalculateProjectSummary(state.currentProjectId); toast('Material excluído.');
+      await remove(ref(db, `materials/${projectId}/${btn.dataset.deleteMaterial}`));
+      await logActivity(projectId, 'material_excluido', `Material excluído: ${material.description}`, btn.dataset.deleteMaterial);
+      await recalculateProjectSummary(projectId); toast('Material excluído.');
     } catch (error) { toast(authErrorMessage(error), 'error'); }
   }));
   $$('[data-quick-action]', root).forEach(btn => btn.addEventListener('click', () => {
-    const material = state.materials[btn.dataset.materialId];
+    const projectId = btn.dataset.projectId || state.currentProjectId;
+    const material = state.route === 'compras'
+      ? state.purchaseMaterials[projectId]?.[btn.dataset.materialId]
+      : state.materials[btn.dataset.materialId];
     if (!material) return;
-    if (btn.dataset.quickAction === 'view') openMaterialModal(material.id);
-    else openQuickActionModal(material, btn.dataset.quickAction);
+    if (btn.dataset.quickAction === 'view') openMaterialModal(btn.dataset.materialId, projectId);
+    else openQuickActionModal(material, btn.dataset.quickAction, projectId);
   }));
 }
 
-function openMaterialModal(materialId = '') {
-  const project = activeProject();
+function openMaterialModal(materialId = '', projectId = state.currentProjectId) {
+  const project = state.projects[projectId];
   if (!project) { toast('Crie ou selecione uma obra antes de adicionar materiais.', 'error'); setRoute('obras'); return; }
-  const material = state.materials[materialId] || { source: 'compra', unit: 'un', priority: 'normal', paintingRequired: false };
+  const material = (state.route === 'compras' ? state.purchaseMaterials[projectId]?.[materialId] : state.materials[materialId]) || { source: 'compra', unit: 'un', priority: 'normal', paintingRequired: false };
   const paintingRequired = Boolean(material.paintingRequired);
   openModal({
     title: materialId ? 'Editar material' : 'Adicionar material',
@@ -1093,24 +1117,24 @@ function openMaterialModal(materialId = '') {
       toast('A divisão entre compra e estoque não pode ser alterada depois que o material já teve movimentação.', 'error');
       return;
     }
-    const id = materialId || push(ref(db, `materials/${state.currentProjectId}`)).key;
+    const id = materialId || push(ref(db, `materials/${projectId}`)).key;
     const payload = {
-      ...material, ...entries, id, projectId: state.currentProjectId,
+      ...material, ...entries, id, projectId,
       createdAt: material.createdAt || now(), createdBy: material.createdBy || state.user.uid,
       updatedAt: now(), updatedBy: state.user.uid
     };
     payload.status = deriveMaterialStatus(payload);
     try {
-      await set(ref(db, `materials/${state.currentProjectId}/${id}`), payload);
-      await logActivity(state.currentProjectId, materialId ? 'material_editado' : 'material_adicionado', `${materialId ? 'Material atualizado' : 'Material adicionado'}: ${payload.description}`, id);
-      await recalculateProjectSummary(state.currentProjectId);
+      await set(ref(db, `materials/${projectId}/${id}`), payload);
+      await logActivity(projectId, materialId ? 'material_editado' : 'material_adicionado', `${materialId ? 'Material atualizado' : 'Material adicionado'}: ${payload.description}`, id);
+      await recalculateProjectSummary(projectId);
       closeModal(); toast('Material salvo com sucesso.');
     } catch (error) { toast(authErrorMessage(error), 'error'); }
     finally { setBusy(button, false); }
   });
 }
 
-function openQuickActionModal(material, action) {
+function openQuickActionModal(material, action, projectId = state.currentProjectId) {
   const allocation = materialAllocation(material);
   const totalRequired = allocation.required;
   const availableNow = materialAvailableQty(material);
@@ -1177,7 +1201,7 @@ function openQuickActionModal(material, action) {
     }
   };
   const config = configs[action];
-  if (!config) return openMaterialModal(material.id);
+  if (!config) return openMaterialModal(material.id, projectId);
   openModal({
     title: config.title, subtitle: config.subtitle, small: true,
     body: `<form id="quickActionForm" class="form-grid">${config.fields}</form>`,
@@ -1229,9 +1253,9 @@ function openQuickActionModal(material, action) {
     const payload = { ...material, ...data, updatedAt: now(), updatedBy: state.user.uid };
     payload.status = deriveMaterialStatus(payload);
     try {
-      await update(ref(db, `materials/${state.currentProjectId}/${material.id}`), { ...data, status: payload.status, updatedAt: payload.updatedAt, updatedBy: payload.updatedBy });
-      await logActivity(state.currentProjectId, action, `${config.message}: ${material.description}`, material.id);
-      await recalculateProjectSummary(state.currentProjectId);
+      await update(ref(db, `materials/${projectId}/${material.id}`), { ...data, status: payload.status, updatedAt: payload.updatedAt, updatedBy: payload.updatedBy });
+      await logActivity(projectId, action, `${config.message}: ${material.description}`, material.id);
+      await recalculateProjectSummary(projectId);
       closeModal(); toast(config.message + '.');
     } catch (error) { toast(authErrorMessage(error), 'error'); }
     finally { setBusy(button, false); }
