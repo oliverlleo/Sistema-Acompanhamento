@@ -99,32 +99,29 @@ function safeText(value) {
 function selectedMaterialIds() {
   const ids = [];
   const seen = new Set();
-
-  $$('#view [data-bulk-purchase-item]:checked').forEach(input => {
+  $('#view [data-bulk-purchase-item]:checked').forEach(input => {
     const materialId = input.dataset.bulkPurchaseItem;
-    if (!materialId || seen.has(materialId)) return;
-    seen.add(materialId);
-    ids.push(materialId);
+    const projectId = input.dataset.projectId;
+    if (!projectId || !materialId || seen.has(`${projectId}/${materialId}`)) return;
+    seen.add(`${projectId}/${materialId}`);
+    ids.push({ projectId, materialId });
   });
-
   return ids;
 }
 
 function visibleMaterialIds() {
   const ids = [];
   const seen = new Set();
-
-  $$('#view .data-table tbody tr').forEach(row => {
+  $('#view .data-table tbody tr').forEach(row => {
     if (row.hidden || row.classList.contains('obrafow-search-hidden')) return;
     if (getComputedStyle(row).display === 'none') return;
-
     const action = $('[data-material-id]', row);
     const materialId = action?.dataset.materialId;
-    if (!materialId || seen.has(materialId)) return;
-    seen.add(materialId);
-    ids.push(materialId);
+    const projectId = action?.dataset.projectId;
+    if (!projectId || !materialId || seen.has(`${projectId}/${materialId}`)) return;
+    seen.add(`${projectId}/${materialId}`);
+    ids.push({ projectId, materialId });
   });
-
   return ids;
 }
 
@@ -146,15 +143,10 @@ function filenamePart(value) {
 }
 
 async function exportPurchaseList(button) {
-  const projectId = currentProjectId();
   const selectedIds = selectedMaterialIds();
   const materialIds = selectedIds.length ? selectedIds : visibleMaterialIds();
   const exportingSelection = selectedIds.length > 0;
 
-  if (!projectId) {
-    toast('Selecione uma obra antes de gerar a lista de compra.', 'error');
-    return;
-  }
   if (!materialIds.length) {
     toast('Não há itens selecionados nem itens visíveis na fila de compras para exportar.', 'error');
     return;
@@ -165,14 +157,20 @@ async function exportPurchaseList(button) {
   button.textContent = 'Gerando Excel...';
 
   try {
-    const snapshot = await get(ref(db, `materials/${projectId}`));
-    const materials = snapshot.val() || {};
+    const [materialsSnap, projectsSnap] = await Promise.all([
+      get(ref(db, 'materials')),
+      get(ref(db, 'projects'))
+    ]);
+    const materialsByProject = materialsSnap.val() || {};
+    const projects = projectsSnap.val() || {};
     const rows = materialIds
-      .map(materialId => materials[materialId])
-      .filter(Boolean)
-      .map(material => {
+      .map(({projectId, materialId}) => ({ projectId, material: materialsByProject[projectId]?.[materialId] }))
+      .filter(({material}) => Boolean(material))
+      .map(({projectId, material}) => {
         const purchaseQty = allocation(material).purchaseQty;
+        const project = projects[projectId] || {};
         return [
+          safeText(project.code ? `${project.code} - ${project.name}` : project.name || 'Obra não encontrada'),
           safeText(material.code),
           safeText(material.description),
           safeText(measureText(material)),
@@ -180,26 +178,27 @@ async function exportPurchaseList(button) {
           purchaseQty
         ];
       })
-      .filter(row => number(row[4]) > 0);
+      .filter(row => number(row[5]) > 0);
 
     if (!rows.length) {
       toast('Nenhum item escolhido possui quantidade de compra.', 'error');
       return;
     }
 
-    const headers = ['Código', 'Descrição', 'Medida', 'Cor', 'Quantidade de compra'];
+    const headers = ['Obra', 'Código', 'Descrição', 'Medida', 'Cor', 'Quantidade de compra'];
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
     worksheet['!cols'] = [
+      { wch: 38 },
       { wch: 18 },
       { wch: 48 },
       { wch: 28 },
       { wch: 22 },
       { wch: 22 }
     ];
-    worksheet['!autofilter'] = { ref: `A1:E${rows.length + 1}` };
+    worksheet['!autofilter'] = { ref: `A1:F${rows.length + 1}` };
 
     for (let rowNumber = 2; rowNumber <= rows.length + 1; rowNumber += 1) {
-      const quantityCell = worksheet[`E${rowNumber}`];
+      const quantityCell = worksheet[`F${rowNumber}`];
       if (quantityCell) quantityCell.z = '0.###';
     }
 
@@ -212,7 +211,9 @@ async function exportPurchaseList(button) {
     };
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Lista de Compra');
 
-    const projectLabel = $('#globalProjectSelect option:checked')?.textContent || 'Obra';
+    const projectLabel = $('#purchaseProjectFilter')?.value === 'todas'
+      ? 'Todas_as_Obras'
+      : $('#purchaseProjectFilter option:checked')?.textContent || 'Todas_as_Obras';
     const fileName = `Lista_de_Compra_${filenamePart(projectLabel)}_${localDateStamp()}.xlsx`;
     XLSX.writeFile(workbook, fileName, { compression: true });
     toast(exportingSelection
