@@ -101,7 +101,7 @@ async function loadSeparatedProjectsFeature() {
   }
   loaded.separados = true;
   try {
-    await import('./separated-projects.js?v=20261023-subfiltro-obras-manut2');
+    await import('./separated-projects.js?v=20261023-filtro-padrao-producao1');
     window.ObraFlowSeparatedProjects?.render?.();
   } catch (error) {
     loaded.separados = false;
