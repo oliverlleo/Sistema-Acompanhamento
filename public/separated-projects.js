@@ -30,6 +30,7 @@ let materialsReady = false;
 let stopProfile = null;
 let managerRole = false;
 let phaseFilter = 'todos';
+let kindFilter = 'todos';
 let projectQuery = '';
 let classificationSaving = false;
 let classificationEscapeHandler = null;
@@ -37,12 +38,24 @@ const PROJECT_PHASES = [
   ['lista_inicial', 'Lista inicial'],
   ['producao', 'Produção / Andamento'],
   ['manutencao', 'Manutenção'],
-  ['finalizados', 'Finalizados'],
-  ['compra_estoque', 'Compra / Estoque']
+  ['finalizados', 'Finalizados']
 ];
 const PROJECT_PHASE_LABELS = Object.fromEntries(PROJECT_PHASES);
 function trackingPhase(project = {}) {
   return Object.prototype.hasOwnProperty.call(PROJECT_PHASE_LABELS, project.trackingPhase) ? project.trackingPhase : 'lista_inicial';
+}
+
+const PROJECT_KINDS = [
+  ['obra', 'Obras'],
+  ['manutencao', 'Manutenções']
+];
+function trackingKind(project = {}) {
+  if (project.trackingKind === 'obra' || project.trackingKind === 'manutencao') return project.trackingKind;
+  // Cadastros antigos em manutenção são considerados manutenções; os demais, obras.
+  return trackingPhase(project) === 'manutencao' ? 'manutencao' : 'obra';
+}
+function phaseSupportsKind(phase) {
+  return phase === 'manutencao' || phase === 'finalizados';
 }
 
 function number(value) {
@@ -284,6 +297,11 @@ function ensureStyle() {
     .sep-search input{width:100%;height:44px;padding:0 14px 0 42px;border:1px solid #d8e0e8;border-radius:12px;background:#f8fafc;font:inherit;color:var(--text);outline:none;transition:border-color .15s,box-shadow .15s,background .15s}
     .sep-search input:focus{background:#fff;border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.12)}
     .sep-toolbar-count{display:flex;align-items:baseline;gap:6px;white-space:nowrap;padding:0 4px}
+    .sep-kind-filter{display:flex;align-items:center;gap:8px;min-width:0;color:#475569;font-size:11px;font-weight:750;white-space:nowrap}
+    .sep-kind-filter select{height:44px;min-width:156px;max-width:100%;padding:0 12px;border:1px solid #d8e0e8;border-radius:12px;background:#f8fafc;color:#0f172a;font:inherit;font-size:12px;cursor:pointer}
+    .sep-kind-filter select:focus-visible{outline:2px solid #0f766e;outline-offset:2px}
+    .sep-kind-filter[hidden],.sep-phase-dialog label[hidden]{display:none}
+
     .sep-phase-cards{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;min-width:0}
     .sep-phase-card{position:relative;display:flex;flex-direction:column;justify-content:space-between;align-items:stretch;gap:10px;min-width:0;min-height:82px;padding:13px 14px;border:1px solid #e0e7ee;border-radius:14px;background:#fff;color:#334155;text-align:left;cursor:pointer;font:inherit;box-shadow:0 3px 12px rgba(15,23,42,.035);transition:border-color .16s,background .16s,box-shadow .16s}
     .sep-phase-card:hover{border-color:#71b6a9;background:#f7fcfa}
@@ -390,7 +408,7 @@ function ensureStyle() {
     .sep-back{display:inline-flex;align-items:center;gap:7px;margin-bottom:12px}
     @media(max-width:980px){.sep-detail-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media(max-width:720px){
-      .sep-toolbar{align-items:stretch;flex-direction:column}.sep-toolbar-count{justify-content:flex-end}
+      .sep-toolbar{align-items:stretch;flex-direction:column}.sep-toolbar-count{justify-content:flex-end}.sep-kind-filter{justify-content:space-between}.sep-kind-filter select{flex:1;min-width:0}
       .sep-project-grid{grid-template-columns:1fr}.sep-project-card{min-height:auto}
       .sep-card-head{gap:12px}.sep-donut{--size:78px}.sep-donut-label strong{font-size:17px}
       .sep-detail-top{align-items:flex-start}.sep-detail-top h2{font-size:22px}
@@ -427,6 +445,7 @@ function projectSearchText(projectId, project) {
     project.address,
     project.responsible,
     PROJECT_PHASE_LABELS[trackingPhase(project)],
+    phaseSupportsKind(trackingPhase(project)) ? (trackingKind(project) === 'manutencao' ? 'manutencoes' : 'obras') : '',
     ...separationSummary(projectMaterials(projectId)).categories.map(category => category.name)
   ].filter(Boolean).join(' '));
 }
@@ -453,7 +472,7 @@ function projectCard(projectId, project) {
     : '<div class="sep-category-line"><span>Nenhuma categoria cadastrada</span><strong>—</strong></div>';
 
   return `
-    <article class="sep-project-card" data-phase="${trackingPhase(project)}" data-separated-project="${escapeHtml(projectId)}" data-search="${escapeHtml(projectSearchText(projectId, project))}" tabindex="0" role="button" aria-label="Abrir materiais separados da obra ${escapeHtml(project.name || project.code || '')}">
+    <article class="sep-project-card" data-phase="${trackingPhase(project)}" data-kind="${trackingKind(project)}" data-separated-project="${escapeHtml(projectId)}" data-search="${escapeHtml(projectSearchText(projectId, project))}" tabindex="0" role="button" aria-label="Abrir materiais separados da obra ${escapeHtml(project.name || project.code || '')}">
       <div class="sep-card-head">
         <div class="sep-card-copy">
           <span class="sep-project-code">${escapeHtml(project.code || 'SEM CÓDIGO')}</span>
@@ -485,17 +504,24 @@ function projectCard(projectId, project) {
 function bindProjectSearch(view) {
   const input = $('#separatedProjectSearch', view);
   const phaseButtons = $$('[data-phase-filter]', view);
+  const kindHolder = $('#separatedProjectKindHolder', view);
+  const kindSelect = $('#separatedProjectKindFilter', view);
   const count = $('#separatedProjectCount', view);
   const cards = $$('[data-separated-project]', view);
   const noResults = $('#separatedNoResults', view);
 
   const apply = () => {
     projectQuery = input?.value || '';
+    const withKind = phaseSupportsKind(phaseFilter);
+    if (!withKind) kindFilter = 'todos';
+    if (kindHolder) kindHolder.hidden = !withKind;
+    if (kindSelect) kindSelect.value = kindFilter;
     const query = normalize(projectQuery);
     let visible = 0;
     cards.forEach(card => {
       const matches = (!query || card.dataset.search.includes(query))
-        && (phaseFilter === 'todos' || card.dataset.phase === phaseFilter);
+        && (phaseFilter === 'todos' || card.dataset.phase === phaseFilter)
+        && (!withKind || kindFilter === 'todos' || card.dataset.kind === kindFilter);
       card.hidden = !matches;
       if (matches) visible += 1;
     });
@@ -508,7 +534,9 @@ function bindProjectSearch(view) {
   };
 
   input?.addEventListener('input', apply);
+  kindSelect?.addEventListener('change', () => { kindFilter = kindSelect.value; apply(); });
   phaseButtons.forEach(button => button.addEventListener('click', () => {
+    if (phaseFilter !== button.dataset.phaseFilter) kindFilter = 'todos';
     phaseFilter = button.dataset.phaseFilter;
     apply();
   }));
@@ -535,10 +563,23 @@ function openClassificationDialog(projectId) {
     <label for="trackingPhaseSelect">Grupo da obra
       <select id="trackingPhaseSelect" name="phase">${PROJECT_PHASES.map(([value, label]) => `<option value="${value}" ${currentPhase === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select>
     </label>
+    <label for="trackingKindSelect" id="trackingKindRow" ${phaseSupportsKind(currentPhase) ? '' : 'hidden'}>Tipo
+      <select id="trackingKindSelect" name="kind">${PROJECT_KINDS.map(([value, label]) => `<option value="${value}" ${trackingKind(project) === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select>
+    </label>
     <p class="sep-phase-error" id="trackingPhaseError" hidden></p>
     <div class="sep-phase-actions"><button type="button" data-phase-cancel>Cancelar</button><button type="submit" data-phase-save>Salvar classificação</button></div>
   </form>`;
   document.body.appendChild(overlay);
+  const phaseSelect = $('#trackingPhaseSelect', overlay);
+  const kindRow = $('#trackingKindRow', overlay);
+  const kindSelect = $('#trackingKindSelect', overlay);
+  phaseSelect.addEventListener('change', () => {
+    const nextPhase = phaseSelect.value;
+    kindRow.hidden = !phaseSupportsKind(nextPhase);
+    if (nextPhase === 'manutencao' && currentPhase !== 'manutencao' && !project.trackingKind) {
+      kindSelect.value = 'manutencao';
+    }
+  });
   const close = () => closeClassificationDialog();
   classificationEscapeHandler = event => { if (event.key === 'Escape') close(); };
   document.addEventListener('keydown', classificationEscapeHandler);
@@ -548,7 +589,9 @@ function openClassificationDialog(projectId) {
     event.preventDefault();
     if (classificationSaving) return;
     const phase = $('#trackingPhaseSelect', overlay)?.value;
+    const kind = $('#trackingKindSelect', overlay)?.value;
     if (!Object.prototype.hasOwnProperty.call(PROJECT_PHASE_LABELS, phase)) return;
+    if (phaseSupportsKind(phase) && !PROJECT_KINDS.some(([value]) => value === kind)) return;
     const currentUser = auth.currentUser;
     if (!currentUser || !managerRole || !projects[projectId]) { close(); return; }
     const button = $('[data-phase-save]', overlay);
@@ -560,7 +603,9 @@ function openClassificationDialog(projectId) {
         || profileSnapshot.val()?.role !== 'gerente' || profileSnapshot.val()?.active !== true) {
         throw new Error('Somente usuários com cargo de gerente podem classificar obras.');
       }
-      await update(ref(db, `projects/${projectId}`), { trackingPhase: phase });
+      const values = { trackingPhase: phase };
+      if (phaseSupportsKind(phase)) values.trackingKind = kind;
+      await update(ref(db, `projects/${projectId}`), values);
       close();
     } catch (error) {
       console.error('Falha ao classificar obra:', error);
@@ -597,6 +642,7 @@ function renderProjectList(view) {
           ${searchIcon()}
           <input id="separatedProjectSearch" type="search" autocomplete="off" placeholder="Buscar por código, obra, cliente ou categoria" value="${escapeHtml(projectQuery)}" />
         </label>
+        <label id="separatedProjectKindHolder" class="sep-kind-filter" for="separatedProjectKindFilter" ${phaseSupportsKind(phaseFilter) ? '' : 'hidden'}><span>Tipo</span><select id="separatedProjectKindFilter" aria-label="Filtrar entre obras e manutenções"><option value="todos">Todos os tipos</option>${PROJECT_KINDS.map(([value, label]) => `<option value="${value}" ${kindFilter === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label>
         <div class="sep-toolbar-count"><strong id="separatedProjectCount">${projectEntries.length}</strong><span>obra${projectEntries.length === 1 ? '' : 's'}</span></div>
       </div>
       ${projectEntries.length
@@ -849,6 +895,7 @@ onAuthStateChanged(auth, user => {
     selectedProjectId = '';
     projectQuery = '';
     phaseFilter = 'todos';
+    kindFilter = 'todos';
   }
 });
 
