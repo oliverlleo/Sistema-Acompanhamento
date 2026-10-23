@@ -284,9 +284,18 @@ function ensureStyle() {
     .sep-search input{width:100%;height:44px;padding:0 14px 0 42px;border:1px solid #d8e0e8;border-radius:12px;background:#f8fafc;font:inherit;color:var(--text);outline:none;transition:border-color .15s,box-shadow .15s,background .15s}
     .sep-search input:focus{background:#fff;border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.12)}
     .sep-toolbar-count{display:flex;align-items:baseline;gap:6px;white-space:nowrap;padding:0 4px}
-    .sep-phase-filter{display:flex;align-items:center;gap:8px;color:#475569;font-size:11px;font-weight:700;white-space:nowrap}
-    .sep-phase-filter select{min-width:185px;max-width:100%;height:44px;padding:0 12px;border:1px solid #d8e0e8;border-radius:12px;background:#fff;color:#0f172a;font:inherit;font-size:12px;cursor:pointer}
-    .sep-phase-filter select:focus-visible{outline:2px solid #0f766e;outline-offset:2px}
+    .sep-phase-cards{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;min-width:0}
+    .sep-phase-card{position:relative;display:flex;flex-direction:column;justify-content:space-between;align-items:stretch;gap:10px;min-width:0;min-height:82px;padding:13px 14px;border:1px solid #e0e7ee;border-radius:14px;background:#fff;color:#334155;text-align:left;cursor:pointer;font:inherit;box-shadow:0 3px 12px rgba(15,23,42,.035);transition:border-color .16s,background .16s,box-shadow .16s}
+    .sep-phase-card:hover{border-color:#71b6a9;background:#f7fcfa}
+    .sep-phase-card:focus-visible{outline:3px solid rgba(15,118,110,.25);outline-offset:2px}
+    .sep-phase-card[aria-pressed="true"]{border-color:#0f766e;background:#edfaf6;box-shadow:inset 0 0 0 1px #0f766e,0 5px 16px rgba(15,118,110,.10)}
+    .sep-phase-card[aria-pressed="true"]::before{content:'';position:absolute;top:0;left:13px;right:13px;height:3px;background:#0f766e;border-radius:0 0 4px 4px}
+    .sep-phase-name{display:block;font-size:11px;line-height:1.25;font-weight:750;overflow-wrap:break-word}
+    .sep-phase-card[aria-pressed="true"] .sep-phase-name{color:#0f766e}
+    .sep-phase-number{display:block;color:#0f172a;font-size:24px;line-height:1;font-weight:800;font-variant-numeric:tabular-nums}
+    .sep-phase-card[aria-pressed="true"] .sep-phase-number{color:#0f766e}
+    @media(max-width:1180px){.sep-phase-cards{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(158px,1fr);grid-template-columns:none;overflow-x:auto;padding:2px 2px 8px;scroll-snap-type:x proximity;scrollbar-width:thin}.sep-phase-card{scroll-snap-align:start}}
+    @media(max-width:720px){.sep-phase-cards{grid-auto-columns:minmax(148px,60%);gap:8px}.sep-phase-card{min-height:77px;padding:12px}}
     .sep-classification{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
     .sep-phase-tag{display:inline-flex;align-items:center;min-height:25px;padding:5px 9px;border-radius:8px;background:#e7f2ef;color:#0f766e;font-size:10px;font-weight:800}
     .sep-phase-edit{padding:6px 10px;border:1px solid #bbddd6;border-radius:9px;background:#fff;color:#0f766e;font:inherit;font-size:11px;font-weight:800;cursor:pointer}
@@ -301,6 +310,7 @@ function ensureStyle() {
     .sep-toolbar-count span{font-size:12px;color:#64748b}
     .sep-project-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:16px;align-items:start}
     .sep-project-card{position:relative;display:flex;flex-direction:column;min-height:300px;padding:20px;background:#fff;border:1px solid #dfe6ed;border-radius:18px;box-shadow:0 6px 18px rgba(15,23,42,.045);cursor:pointer;overflow:hidden;transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+    .sep-project-card[hidden],#separatedNoResults[hidden]{display:none}
     .sep-project-card:hover{transform:translateY(-3px);border-color:rgba(15,118,110,.36);box-shadow:0 15px 34px rgba(15,23,42,.10)}
     .sep-project-card:focus-visible{outline:3px solid rgba(15,118,110,.22);outline-offset:2px}
     .sep-project-card::before{content:'';position:absolute;inset:0 0 auto;height:4px;background:linear-gradient(90deg,#0f766e,#14b8a6)}
@@ -380,7 +390,7 @@ function ensureStyle() {
     .sep-back{display:inline-flex;align-items:center;gap:7px;margin-bottom:12px}
     @media(max-width:980px){.sep-detail-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media(max-width:720px){
-      .sep-toolbar{align-items:stretch;flex-direction:column}.sep-toolbar-count{justify-content:flex-end}.sep-phase-filter{justify-content:space-between;flex-wrap:wrap}.sep-phase-filter select{flex:1;min-width:155px}
+      .sep-toolbar{align-items:stretch;flex-direction:column}.sep-toolbar-count{justify-content:flex-end}
       .sep-project-grid{grid-template-columns:1fr}.sep-project-card{min-height:auto}
       .sep-card-head{gap:12px}.sep-donut{--size:78px}.sep-donut-label strong{font-size:17px}
       .sep-detail-top{align-items:flex-start}.sep-detail-top h2{font-size:22px}
@@ -474,14 +484,13 @@ function projectCard(projectId, project) {
 
 function bindProjectSearch(view) {
   const input = $('#separatedProjectSearch', view);
-  const phaseSelect = $('#separatedProjectPhaseFilter', view);
+  const phaseButtons = $$('[data-phase-filter]', view);
   const count = $('#separatedProjectCount', view);
   const cards = $$('[data-separated-project]', view);
   const noResults = $('#separatedNoResults', view);
 
   const apply = () => {
     projectQuery = input?.value || '';
-    phaseFilter = phaseSelect?.value || 'todos';
     const query = normalize(projectQuery);
     let visible = 0;
     cards.forEach(card => {
@@ -490,12 +499,19 @@ function bindProjectSearch(view) {
       card.hidden = !matches;
       if (matches) visible += 1;
     });
+    phaseButtons.forEach(button => {
+      const selected = button.dataset.phaseFilter === phaseFilter;
+      button.setAttribute('aria-pressed', String(selected));
+    });
     if (count) count.textContent = String(visible);
     if (noResults) noResults.hidden = visible !== 0;
   };
 
   input?.addEventListener('input', apply);
-  phaseSelect?.addEventListener('change', apply);
+  phaseButtons.forEach(button => button.addEventListener('click', () => {
+    phaseFilter = button.dataset.phaseFilter;
+    apply();
+  }));
   apply();
 }
 
@@ -560,18 +576,27 @@ function openClassificationDialog(projectId) {
 function renderProjectList(view) {
   const projectEntries = Object.entries(projects)
     .sort(([, a], [, b]) => String(a.name || a.code || '').localeCompare(String(b.name || b.code || ''), 'pt-BR'));
+  const phaseCounts = Object.fromEntries(PROJECT_PHASES.map(([key]) => [key, 0]));
+  projectEntries.forEach(([, project]) => { phaseCounts[trackingPhase(project)] += 1; });
+  const filterCards = [['todos', 'Todas as obras', projectEntries.length],
+    ...PROJECT_PHASES.map(([key, label]) => [key, label, phaseCounts[key]])]
+    .map(([key, label, total]) => `<button type="button" class="sep-phase-card" data-phase-filter="${key}" aria-pressed="${phaseFilter === key}" aria-label="${escapeHtml(label)}: ${total} obra${total === 1 ? '' : 's'}">
+      <span class="sep-phase-name">${escapeHtml(label)}</span><strong class="sep-phase-number">${total}</strong>
+    </button>`).join('');
 
   view.innerHTML = `
     <div class="sep-shell">
       <div class="page-head">
         <div><h2>Acompanhamento por obra</h2><p>Localize uma obra para acompanhar compras, pintura, materiais conferidos e separação.</p></div>
       </div>
+      <nav class="sep-phase-cards" aria-label="Filtrar obras por etapa">
+        ${filterCards}
+      </nav>
       <div class="sep-toolbar">
         <label class="sep-search" aria-label="Buscar obra">
           ${searchIcon()}
           <input id="separatedProjectSearch" type="search" autocomplete="off" placeholder="Buscar por código, obra, cliente ou categoria" value="${escapeHtml(projectQuery)}" />
         </label>
-        <label class="sep-phase-filter" for="separatedProjectPhaseFilter"><span>Etapa</span><select id="separatedProjectPhaseFilter" aria-label="Filtrar obras por etapa"><option value="todos">Todas as etapas</option>${PROJECT_PHASES.map(([value, label]) => `<option value="${value}" ${phaseFilter === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label>
         <div class="sep-toolbar-count"><strong id="separatedProjectCount">${projectEntries.length}</strong><span>obra${projectEntries.length === 1 ? '' : 's'}</span></div>
       </div>
       ${projectEntries.length
