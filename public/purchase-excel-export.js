@@ -99,7 +99,7 @@ function safeText(value) {
 function selectedMaterialIds() {
   const ids = [];
   const seen = new Set();
-  $('#view [data-bulk-purchase-item]:checked').forEach(input => {
+  $$('#view [data-bulk-purchase-item]:checked').forEach(input => {
     const materialId = input.dataset.bulkPurchaseItem;
     const projectId = input.dataset.projectId;
     if (!projectId || !materialId || seen.has(`${projectId}/${materialId}`)) return;
@@ -112,7 +112,7 @@ function selectedMaterialIds() {
 function visibleMaterialIds() {
   const ids = [];
   const seen = new Set();
-  $('#view .data-table tbody tr').forEach(row => {
+  $$('#view .data-table tbody tr').forEach(row => {
     if (row.hidden || row.classList.contains('obrafow-search-hidden')) return;
     if (getComputedStyle(row).display === 'none') return;
     const action = $('[data-material-id]', row);
