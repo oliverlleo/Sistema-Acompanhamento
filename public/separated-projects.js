@@ -1,6 +1,6 @@
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
-import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
+import { getDatabase, ref, get, onValue, update } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
 import { allocation, purchaseCommitted, receivedPurchaseQty, quantityNumber } from './material-flow.js?v=20260803-1648';
 
 const firebaseConfig = {
@@ -27,6 +27,22 @@ let stopMaterials = null;
 let started = false;
 let projectsReady = false;
 let materialsReady = false;
+let stopProfile = null;
+let managerRole = false;
+let phaseFilter = 'todos';
+let projectQuery = '';
+let classificationSaving = false;
+const PROJECT_PHASES = [
+  ['lista_inicial', 'Lista inicial'],
+  ['producao', 'Produção / Andamento'],
+  ['manutencao', 'Manutenção'],
+  ['finalizados', 'Finalizados'],
+  ['compra_estoque', 'Compra / Estoque']
+];
+const PROJECT_PHASE_LABELS = Object.fromEntries(PROJECT_PHASES);
+function trackingPhase(project = {}) {
+  return Object.prototype.hasOwnProperty.call(PROJECT_PHASE_LABELS, project.trackingPhase) ? project.trackingPhase : 'lista_inicial';
+}
 
 function number(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
@@ -267,6 +283,19 @@ function ensureStyle() {
     .sep-search input{width:100%;height:44px;padding:0 14px 0 42px;border:1px solid #d8e0e8;border-radius:12px;background:#f8fafc;font:inherit;color:var(--text);outline:none;transition:border-color .15s,box-shadow .15s,background .15s}
     .sep-search input:focus{background:#fff;border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.12)}
     .sep-toolbar-count{display:flex;align-items:baseline;gap:6px;white-space:nowrap;padding:0 4px}
+    .sep-phase-filter{display:flex;align-items:center;gap:8px;color:#475569;font-size:11px;font-weight:700;white-space:nowrap}
+    .sep-phase-filter select{min-width:185px;max-width:100%;height:44px;padding:0 12px;border:1px solid #d8e0e8;border-radius:12px;background:#fff;color:#0f172a;font:inherit;font-size:12px;cursor:pointer}
+    .sep-phase-filter select:focus-visible{outline:2px solid #0f766e;outline-offset:2px}
+    .sep-classification{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+    .sep-phase-tag{display:inline-flex;align-items:center;min-height:25px;padding:5px 9px;border-radius:8px;background:#e7f2ef;color:#0f766e;font-size:10px;font-weight:800}
+    .sep-phase-edit{padding:6px 10px;border:1px solid #bbddd6;border-radius:9px;background:#fff;color:#0f766e;font:inherit;font-size:11px;font-weight:800;cursor:pointer}
+    .sep-phase-edit:hover{background:#effaf7}.sep-phase-edit:focus-visible{outline:2px solid #0f766e;outline-offset:2px}
+    .sep-phase-overlay{position:fixed;z-index:110;inset:0;display:grid;place-items:center;padding:16px;background:rgba(15,23,42,.48)}
+    .sep-phase-dialog{width:min(420px,100%);padding:22px;background:#fff;border-radius:18px;box-shadow:0 22px 65px rgba(15,23,42,.26)}
+    .sep-phase-dialog h3{margin:0 0 6px;color:#0f172a;font-size:20px}.sep-phase-dialog p{margin:0 0 18px;color:#64748b;font-size:12px;line-height:1.5}
+    .sep-phase-dialog label{display:grid;gap:8px;color:#334155;font-size:12px;font-weight:700}.sep-phase-dialog select{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#0f172a;font:inherit;font-weight:500}
+    .sep-phase-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:20px}.sep-phase-actions button{padding:10px 15px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#0f172a;font:inherit;font-size:12px;font-weight:800;cursor:pointer}.sep-phase-actions button[type="submit"]{border-color:#0f766e;background:#0f766e;color:#fff}.sep-phase-actions button:disabled{opacity:.65;cursor:wait}
+    .sep-phase-error{margin-top:10px!important;color:#b91c1c!important;font-weight:700}
     .sep-toolbar-count strong{font-size:20px;color:#0f172a}
     .sep-toolbar-count span{font-size:12px;color:#64748b}
     .sep-project-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:16px;align-items:start}
@@ -350,7 +379,7 @@ function ensureStyle() {
     .sep-back{display:inline-flex;align-items:center;gap:7px;margin-bottom:12px}
     @media(max-width:980px){.sep-detail-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media(max-width:720px){
-      .sep-toolbar{align-items:stretch;flex-direction:column}.sep-toolbar-count{justify-content:flex-end}
+      .sep-toolbar{align-items:stretch;flex-direction:column}.sep-toolbar-count{justify-content:flex-end}.sep-phase-filter{justify-content:space-between;flex-wrap:wrap}.sep-phase-filter select{flex:1;min-width:155px}
       .sep-project-grid{grid-template-columns:1fr}.sep-project-card{min-height:auto}
       .sep-card-head{gap:12px}.sep-donut{--size:78px}.sep-donut-label strong{font-size:17px}
       .sep-detail-top{align-items:flex-start}.sep-detail-top h2{font-size:22px}
@@ -386,6 +415,7 @@ function projectSearchText(projectId, project) {
     project.client,
     project.address,
     project.responsible,
+    PROJECT_PHASE_LABELS[trackingPhase(project)],
     ...separationSummary(projectMaterials(projectId)).categories.map(category => category.name)
   ].filter(Boolean).join(' '));
 }
@@ -412,7 +442,7 @@ function projectCard(projectId, project) {
     : '<div class="sep-category-line"><span>Nenhuma categoria cadastrada</span><strong>—</strong></div>';
 
   return `
-    <article class="sep-project-card" data-separated-project="${escapeHtml(projectId)}" data-search="${escapeHtml(projectSearchText(projectId, project))}" tabindex="0" role="button" aria-label="Abrir materiais separados da obra ${escapeHtml(project.name || project.code || '')}">
+    <article class="sep-project-card" data-phase="${trackingPhase(project)}" data-separated-project="${escapeHtml(projectId)}" data-search="${escapeHtml(projectSearchText(projectId, project))}" tabindex="0" role="button" aria-label="Abrir materiais separados da obra ${escapeHtml(project.name || project.code || '')}">
       <div class="sep-card-head">
         <div class="sep-card-copy">
           <span class="sep-project-code">${escapeHtml(project.code || 'SEM CÓDIGO')}</span>
@@ -421,6 +451,7 @@ function projectCard(projectId, project) {
         </div>
         ${donut(progress.resolved, 92, 'resolvido')}
       </div>
+      <div class="sep-classification"><span class="sep-phase-tag">${escapeHtml(PROJECT_PHASE_LABELS[trackingPhase(project)])}</span>${managerRole ? `<button type="button" class="sep-phase-edit" data-classify-project="${escapeHtml(projectId)}" aria-label="Classificar obra ${escapeHtml(project.name || project.code || '')}">Classificar</button>` : ''}</div>
       <div class="sep-stage-progress" aria-label="Andamento da obra por etapa">
         ${stageMeter('Comprado', progress.purchased, 'Itens com compra registrada entre os destinados à compra. Pendências sem origem aparecem no aviso.')}
         ${stageMeter('Recebido', progress.received, 'Média dos percentuais recebidos de cada item destinado à compra. Recebimentos parciais são proporcionais.')}
@@ -442,15 +473,19 @@ function projectCard(projectId, project) {
 
 function bindProjectSearch(view) {
   const input = $('#separatedProjectSearch', view);
+  const phaseSelect = $('#separatedProjectPhaseFilter', view);
   const count = $('#separatedProjectCount', view);
   const cards = $$('[data-separated-project]', view);
   const noResults = $('#separatedNoResults', view);
 
   const apply = () => {
-    const query = normalize(input?.value || '');
+    projectQuery = input?.value || '';
+    phaseFilter = phaseSelect?.value || 'todos';
+    const query = normalize(projectQuery);
     let visible = 0;
     cards.forEach(card => {
-      const matches = !query || card.dataset.search.includes(query);
+      const matches = (!query || card.dataset.search.includes(query))
+        && (phaseFilter === 'todos' || card.dataset.phase === phaseFilter);
       card.hidden = !matches;
       if (matches) visible += 1;
     });
@@ -459,7 +494,64 @@ function bindProjectSearch(view) {
   };
 
   input?.addEventListener('input', apply);
+  phaseSelect?.addEventListener('change', apply);
   apply();
+}
+
+function closeClassificationDialog() {
+  $('#trackingPhaseOverlay')?.remove();
+}
+
+function openClassificationDialog(projectId) {
+  if (!managerRole || !auth.currentUser || !projects[projectId]) return;
+  closeClassificationDialog();
+  const project = projects[projectId];
+  const overlay = document.createElement('div');
+  overlay.id = 'trackingPhaseOverlay';
+  overlay.className = 'sep-phase-overlay';
+  const currentPhase = trackingPhase(project);
+  overlay.innerHTML = `<form class="sep-phase-dialog" id="trackingPhaseForm" role="dialog" aria-modal="true" aria-label="Classificar obra">
+    <h3>Classificar obra</h3>
+    <p>${escapeHtml(project.code || '')} · ${escapeHtml(project.name || 'Obra')} — escolha em qual grupo esta obra será exibida.</p>
+    <label for="trackingPhaseSelect">Grupo da obra
+      <select id="trackingPhaseSelect" name="phase">${PROJECT_PHASES.map(([value, label]) => `<option value="${value}" ${currentPhase === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select>
+    </label>
+    <p class="sep-phase-error" id="trackingPhaseError" hidden></p>
+    <div class="sep-phase-actions"><button type="button" data-phase-cancel>Cancelar</button><button type="submit" data-phase-save>Salvar classificação</button></div>
+  </form>`;
+  document.body.appendChild(overlay);
+  const escapeHandler = event => { if (event.key === 'Escape') close(); };
+  const close = () => { document.removeEventListener('keydown', escapeHandler); closeClassificationDialog(); };
+  document.addEventListener('keydown', escapeHandler);
+  overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+  $('[data-phase-cancel]', overlay).addEventListener('click', close);
+  $('#trackingPhaseForm', overlay).addEventListener('submit', async event => {
+    event.preventDefault();
+    if (classificationSaving) return;
+    const phase = $('#trackingPhaseSelect', overlay)?.value;
+    if (!Object.prototype.hasOwnProperty.call(PROJECT_PHASE_LABELS, phase)) return;
+    const currentUser = auth.currentUser;
+    if (!currentUser || !managerRole || !projects[projectId]) { close(); return; }
+    const button = $('[data-phase-save]', overlay);
+    classificationSaving = true;
+    button.disabled = true;
+    try {
+      const profileSnapshot = await get(ref(db, `users/${currentUser.uid}`));
+      if (!auth.currentUser || auth.currentUser.uid !== currentUser.uid
+        || profileSnapshot.val()?.role !== 'gerente' || profileSnapshot.val()?.active !== true) {
+        throw new Error('Somente usuários com cargo de gerente podem classificar obras.');
+      }
+      await update(ref(db, `projects/${projectId}`), { trackingPhase: phase });
+      close();
+    } catch (error) {
+      console.error('Falha ao classificar obra:', error);
+      const message = $('#trackingPhaseError', overlay);
+      if (message) { message.textContent = error.message || 'Não foi possível salvar a classificação.'; message.hidden = false; }
+    } finally {
+      classificationSaving = false;
+      if (button.isConnected) button.disabled = false;
+    }
+  });
 }
 
 function renderProjectList(view) {
@@ -474,8 +566,9 @@ function renderProjectList(view) {
       <div class="sep-toolbar">
         <label class="sep-search" aria-label="Buscar obra">
           ${searchIcon()}
-          <input id="separatedProjectSearch" type="search" autocomplete="off" placeholder="Buscar por código, obra, cliente ou categoria" />
+          <input id="separatedProjectSearch" type="search" autocomplete="off" placeholder="Buscar por código, obra, cliente ou categoria" value="${escapeHtml(projectQuery)}" />
         </label>
+        <label class="sep-phase-filter" for="separatedProjectPhaseFilter"><span>Etapa</span><select id="separatedProjectPhaseFilter" aria-label="Filtrar obras por etapa"><option value="todos">Todas as etapas</option>${PROJECT_PHASES.map(([value, label]) => `<option value="${value}" ${phaseFilter === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label>
         <div class="sep-toolbar-count"><strong id="separatedProjectCount">${projectEntries.length}</strong><span>obra${projectEntries.length === 1 ? '' : 's'}</span></div>
       </div>
       ${projectEntries.length
@@ -494,14 +587,20 @@ function renderProjectList(view) {
       selectedProjectId = card.dataset.separatedProject;
       render();
     };
-    card.addEventListener('click', open);
+    card.addEventListener('click', event => { if (event.target.closest('[data-classify-project]')) return; open(); });
     card.addEventListener('keydown', event => {
       if (event.key === 'Enter' || event.key === ' ') {
+        if (event.target.closest('button, input, select, a')) return;
         event.preventDefault();
         open();
       }
     });
   });
+  if (managerRole) $$('[data-classify-project]', view).forEach(button => button.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    openClassificationDialog(button.dataset.classifyProject);
+  }));
 
   bindProjectSearch(view);
 }
@@ -698,8 +797,17 @@ window.addEventListener('hashchange', () => {
 });
 
 onAuthStateChanged(auth, user => {
-  if (user) start();
-  else {
+  stopProfile?.();
+  stopProfile = null;
+  managerRole = false;
+  closeClassificationDialog();
+  if (user) {
+    stopProfile = onValue(ref(db, `users/${user.uid}`), snapshot => {
+      managerRole = snapshot.val()?.role === 'gerente' && snapshot.val()?.active === true;
+      if (currentRoute() === 'estoque' && !selectedProjectId) render();
+    }, error => console.error('Falha ao consultar cargo para classificação de obras:', error));
+    start();
+  } else {
     stopProjects?.();
     stopMaterials?.();
     stopProjects = null;
@@ -710,6 +818,8 @@ onAuthStateChanged(auth, user => {
     projects = {};
     materialsByProject = {};
     selectedProjectId = '';
+    projectQuery = '';
+    phaseFilter = 'todos';
   }
 });
 
