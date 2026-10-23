@@ -29,14 +29,14 @@ let projectsReady = false;
 let materialsReady = false;
 let stopProfile = null;
 let managerRole = false;
-let phaseFilter = 'todos';
+let phaseFilter = 'producao';
 let kindFilter = 'todos';
 let projectQuery = '';
 let classificationSaving = false;
 let classificationEscapeHandler = null;
 const PROJECT_PHASES = [
-  ['lista_inicial', 'Lista inicial'],
   ['producao', 'Produção / Andamento'],
+  ['lista_inicial', 'Lista inicial'],
   ['manutencao', 'Manutenção'],
   ['finalizados', 'Finalizados']
 ];
@@ -623,8 +623,8 @@ function renderProjectList(view) {
     .sort(([, a], [, b]) => String(a.name || a.code || '').localeCompare(String(b.name || b.code || ''), 'pt-BR'));
   const phaseCounts = Object.fromEntries(PROJECT_PHASES.map(([key]) => [key, 0]));
   projectEntries.forEach(([, project]) => { phaseCounts[trackingPhase(project)] += 1; });
-  const filterCards = [['todos', 'Todas as obras', projectEntries.length],
-    ...PROJECT_PHASES.map(([key, label]) => [key, label, phaseCounts[key]])]
+  const filterCards = [...PROJECT_PHASES.map(([key, label]) => [key, label, phaseCounts[key]]),
+    ['todos', 'Todos', projectEntries.length]]
     .map(([key, label, total]) => `<button type="button" class="sep-phase-card" data-phase-filter="${key}" aria-pressed="${phaseFilter === key}" aria-label="${escapeHtml(label)}: ${total} obra${total === 1 ? '' : 's'}">
       <span class="sep-phase-name">${escapeHtml(label)}</span><strong class="sep-phase-number">${total}</strong>
     </button>`).join('');
@@ -894,7 +894,7 @@ onAuthStateChanged(auth, user => {
     materialsByProject = {};
     selectedProjectId = '';
     projectQuery = '';
-    phaseFilter = 'todos';
+    phaseFilter = 'producao';
     kindFilter = 'todos';
   }
 });
