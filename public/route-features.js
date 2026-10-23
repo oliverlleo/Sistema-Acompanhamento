@@ -19,7 +19,7 @@ import './global-receiving.js?v=20260803-2013';
 import './receiving-local-search.js?v=20260806-1200';
 import './global-receiving-color.js?v=20260803-2030';
 import './user-role-permissions.js?v=20260803-2149';
-import './calendar.js?v=20260803-1950';
+import './calendar.js?v=20261023-cliente-entregas1';
 import './calendar-focus-fix.js?v=20260803-1951';
 
 const $ = (selector, root = document) => root.querySelector(selector);
