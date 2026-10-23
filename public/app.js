@@ -135,16 +135,17 @@ const state = {
   summaries: {},
   currentProjectId: localStorage.getItem('obraflow.currentProject') || '',
   materials: {},
+  purchaseMaterials: {},
   activities: {},
   inventory: {},
   users: {},
-  filters: { search: '', status: 'todos', category: 'todas' },
+  filters: { search: '', status: 'todos', category: 'todas', purchaseProject: 'todas' },
   importer: {
     file: null, type: '', fileName: '', workbook: null, sheetNames: [], selectedSheet: '',
     matrix: [], headerRow: 0, headers: [], mapping: {}, rows: [], rawPdfLines: [], parser: '',
     defaultSource: 'compra', defaultPainting: false
   },
-  unsubs: { projects: null, summaries: null, materials: null, activities: null, inventory: null, users: null }
+  unsubs: { projects: null, summaries: null, materials: null, purchaseMaterials: null, activities: null, inventory: null, users: null }
 };
 
 function roleLabel(role) {
@@ -154,6 +155,17 @@ function isManager() { return state.profile?.role === 'gerente'; }
 function canManageProjects() { return ['gerente', 'compras'].includes(state.profile?.role); }
 function activeProject() { return state.projects[state.currentProjectId] || null; }
 function currentMaterials() { return Object.values(state.materials || {}); }
+function allPurchaseMaterials() {
+  return Object.entries(state.purchaseMaterials).flatMap(([projectId, items]) =>
+    Object.entries(items || {}).map(([id, item]) => ({ ...item, id, projectId }))
+  ).filter(item => Boolean(state.projects[item.projectId]));
+}
+function purchaseProjectOptions() {
+  return Object.entries(state.projects)
+    .sort((a, b) => (a[1].name || '').localeCompare(b[1].name || '', 'pt-BR'))
+    .map(([id, project]) => `<option value="${escapeHtml(id)}" ${state.filters.purchaseProject === id ? 'selected' : ''}>${escapeHtml(project.code ? `${project.code} - ${project.name}` : project.name)}</option>`)
+    .join('');
+}
 function statusMeta(status) { return STATUS[status] || STATUS.comprar; }
 function statusPill(status) {
   const meta = statusMeta(status);
@@ -357,6 +369,11 @@ function setRoute(route, options = {}) {
     updateProjectSelect();
     listenProjectData(options.projectId);
   }
+  if (route !== 'compras' && state.unsubs.purchaseMaterials) {
+    state.unsubs.purchaseMaterials();
+    state.unsubs.purchaseMaterials = null;
+    state.purchaseMaterials = {};
+  }
   state.route = route;
   const [title, subtitle] = ROUTES[route];
   $('#pageTitle').textContent = title;
@@ -493,7 +510,7 @@ function stopAllListeners() {
     if (typeof state.unsubs[key] === 'function') state.unsubs[key]();
     state.unsubs[key] = null;
   });
-  state.projects = {}; state.summaries = {}; state.materials = {}; state.activities = {};
+  state.projects = {}; state.summaries = {}; state.materials = {}; state.purchaseMaterials = {}; state.activities = {};
   state.inventory = {}; state.users = {};
 }
 
@@ -509,6 +526,14 @@ function startCoreListeners() {
     state.summaries = snap.val() || {};
     if (state.route === 'dashboard' || state.route === 'obras' || state.route === 'materiais') renderCurrent();
   });
+}
+
+function ensurePurchaseMaterialsListener() {
+  if (state.unsubs.purchaseMaterials) return;
+  state.unsubs.purchaseMaterials = onValue(ref(db, 'materials'), (snap) => {
+    state.purchaseMaterials = snap.val() || {};
+    if (state.route === 'compras') renderMaterialQueue('compras');
+  }, (error) => toast(authErrorMessage(error), 'error'));
 }
 
 function listenProjectData(projectId) {
@@ -756,11 +781,13 @@ function materialMatchesRoute(material, route) {
 
 function filteredMaterials(route) {
   const search = normalizeText(state.filters.search);
-  return currentMaterials().filter(item => {
+  return (route === 'compras' ? allPurchaseMaterials() : currentMaterials()).filter(item => {
     const status = item.status || deriveMaterialStatus(item);
     const category = item.category || 'Sem categoria';
-    const haystack = normalizeText([item.code, item.description, item.type, item.color, item.category, item.supplier, item.orderNumber, item.notes, item.dimensions, item.medidas, item.measurements, item.width, item.largura, item.height, item.altura, item.length, item.comprimento, item.medida, item.area, item.areaM2, item.m2, ...Object.values(item.sourceDetails || {})].filter(value => value !== undefined && value !== null && String(value).trim() !== '').join(' '));
+    const project = route === 'compras' ? state.projects[item.projectId] : null;
+    const haystack = normalizeText([item.code, item.description, item.type, item.color, item.category, item.supplier, item.orderNumber, item.notes, item.dimensions, item.medidas, item.measurements, item.width, item.largura, item.height, item.altura, item.length, item.comprimento, item.medida, item.area, item.areaM2, item.m2, project?.name, project?.code, ...Object.values(item.sourceDetails || {})].filter(value => value !== undefined && value !== null && String(value).trim() !== '').join(' '));
     return materialMatchesRoute(item, route)
+      && (route !== 'compras' || state.filters.purchaseProject === 'todas' || item.projectId === state.filters.purchaseProject)
       && (!search || haystack.includes(search))
       && (state.filters.status === 'todos' || status === state.filters.status)
       && (state.filters.category === 'todas' || category === state.filters.category);
@@ -773,12 +800,13 @@ function filteredMaterials(route) {
 function renderMaterialQueue(route) {
   const view = $('#view');
   const project = activeProject();
-  if (!project) {
+  if (route === 'compras') ensurePurchaseMaterialsListener();
+  if (route !== 'compras' && !project) {
     view.innerHTML = `<div class="card">${emptyState('▣', 'Selecione ou crie uma obra', 'Os materiais sempre ficam vinculados a uma obra.', canManageProjects() ? '<button class="btn btn-primary" data-action="new-project">Criar obra</button>' : '')}</div>`;
     bindCommonPageActions(view); return;
   }
 
-  const all = currentMaterials();
+  const all = route === 'compras' ? allPurchaseMaterials() : currentMaterials();
   const materials = filteredMaterials(route);
   const summary = state.summaries[state.currentProjectId] || {};
   const categories = [...new Set(all.map(m => m.category || 'Sem categoria'))].sort();
@@ -791,6 +819,7 @@ function renderMaterialQueue(route) {
   }[route];
 
   view.innerHTML = `
+    ${route === 'compras' ? '' : `
     <section class="detail-hero">
       <div><span class="project-code">OBRA ${escapeHtml(project.code || '')}</span><h2>${escapeHtml(project.name)}</h2><p>${escapeHtml(project.client || project.address || 'Sem cliente/local informado')} · Prazo ${fmtDate(project.deadline)}</p></div>
       <div class="detail-score" style="--pct:${clamp(num(summary.progress), 0, 100)}%"><span>${num(summary.progress)}%</span></div>
@@ -802,13 +831,14 @@ function renderMaterialQueue(route) {
       ${flowCard('Em pintura', num(summary.pintura), '')}
       ${flowCard('Pintura atrasada', num(summary.pinturaAtrasada), num(summary.pinturaAtrasada) ? 'danger' : '')}
       ${flowCard('Pronto para separar', num(summary.separar), num(summary.separar) ? 'warning' : '')}
-    </section>
+    </section>`}
     <div class="page-head">
-      <div><h2>${routeCopy[0]}</h2><p>${routeCopy[1]}</p></div>
+      <div><h2>${routeCopy[0]}</h2><p>${route === 'compras' ? 'Compras pendentes de todas as obras. Use os filtros para selecionar uma obra; novos materiais e importações usam a obra ativa no topo.' : routeCopy[1]}</p></div>
       <div class="page-actions"><button class="btn btn-ghost" data-action="import">⇧ Importar</button><button class="btn btn-primary" data-action="new-material">+ Material</button></div>
     </div>
     <div class="toolbar">
       <input id="materialSearch" class="grow" type="search" placeholder="Buscar código, descrição, fornecedor..." value="${escapeHtml(state.filters.search)}" />
+      ${route === 'compras' ? `<select id="purchaseProjectFilter" aria-label="Filtrar compras por obra"><option value="todas">Todas as obras</option>${purchaseProjectOptions()}</select>` : ''}
       <select id="statusFilter"><option value="todos">Todos os status</option>${Object.entries(STATUS).map(([key, meta]) => `<option value="${key}" ${state.filters.status === key ? 'selected' : ''}>${escapeHtml(meta.label)}</option>`).join('')}</select>
       <select id="categoryFilter"><option value="todas">Todas as categorias</option>${categories.map(c => `<option value="${escapeHtml(c)}" ${state.filters.category === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select>
       <span class="status-pill status-neutral">${materials.length} item(ns)</span>
@@ -819,6 +849,7 @@ function renderMaterialQueue(route) {
   bindCommonPageActions(view);
   $$('[data-action="import"]', view).forEach(btn => btn.addEventListener('click', () => setRoute('importar')));
   $('#materialSearch')?.addEventListener('input', (e) => { state.filters.search = e.target.value; renderMaterialQueue(route); $('#materialSearch')?.focus(); });
+  $('#purchaseProjectFilter')?.addEventListener('change', (e) => { state.filters.purchaseProject = e.target.value; renderMaterialQueue(route); });
   $('#statusFilter')?.addEventListener('change', (e) => { state.filters.status = e.target.value; renderMaterialQueue(route); });
   $('#categoryFilter')?.addEventListener('change', (e) => { state.filters.category = e.target.value; renderMaterialQueue(route); });
   bindMaterialTableActions(view);
