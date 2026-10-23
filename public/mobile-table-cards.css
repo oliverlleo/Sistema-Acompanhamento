@@ -213,13 +213,13 @@
     color:#0f172a;
   }
   #view .mobile-purchase-sort select:focus-visible{outline:2px solid #0f766e;outline-offset:2px}
-  /* Nos celulares menores, cada informação ocupa sua própria linha. */
-  @media(max-width:400px){
-    #view :is(
-      .table-wrap:not(.preview-table)>table.data-table,
-      .sep-table-wrap>table.sep-table,
-      .trk-table-wrap>table.trk-table,
-      .gr-table-wrap>table.gr-table
-    ) tbody>tr{grid-template-columns:minmax(0,1fr)}
-  }
+}
+/* Nos celulares menores, cada informação ocupa sua própria linha. */
+@media(max-width:400px){
+  #view :is(
+    .table-wrap:not(.preview-table)>table.data-table,
+    .sep-table-wrap>table.sep-table,
+    .trk-table-wrap>table.trk-table,
+    .gr-table-wrap>table.gr-table
+  ) tbody>tr{grid-template-columns:minmax(0,1fr)}
 }
