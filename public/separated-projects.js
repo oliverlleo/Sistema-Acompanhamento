@@ -1,7 +1,7 @@
 import { getApps, getApp, initializeApp } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js';
 import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js';
 import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js';
-import { allocation, purchaseCommitted, quantityNumber} from './material-flow.js?v=20260803-1648';
+import { allocation, purchaseCommitted, receivedPurchaseQty, quantityNumber } from './material-flow.js?v=20260803-1648';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDtfxhvronefOV9MoDj-GvUUiJ3TLfb8qc',
@@ -177,6 +177,73 @@ function separationSummary(items = []) {
   };
 }
 
+// Progresso dos cards: contabiliza cada material individualmente para não
+// misturar unidades (peças, metros, m²). A origem indefinida nunca é resolvida.
+function honestStagePercent(value, total) {
+  if (!(total > 0)) return { ...percentMeta(0, 0), label: '—' };
+  const meta = percentMeta(value, total);
+  // Não exibir 100% por arredondamento quando ainda houver saldo.
+  return { ...meta, label: meta.exact >= 100 - 0.000001 ? '100%' : `${Math.min(99, Math.round(meta.exact))}%` };
+}
+
+function workProgress(items = []) {
+  const epsilon = 0.000001;
+  let purchaseItems = 0;
+  let purchasedItems = 0;
+  let receivedProgress = 0;
+  let receivedCompleteItems = 0;
+  let separatedProgress = 0;
+  let separatedCompleteItems = 0;
+  let resolvedItems = 0;
+  let undefinedItems = 0;
+  let missingQuantityItems = 0;
+  let unregisteredPurchaseItems = 0;
+
+  items.forEach(material => {
+    const alloc = allocation(material);
+    const required = alloc.required;
+    if (!(required > epsilon)) {
+      missingQuantityItems += 1;
+      return;
+    }
+
+    if (alloc.unallocatedQty > epsilon) undefinedItems += 1;
+
+    if (alloc.purchaseQty > epsilon) {
+      purchaseItems += 1;
+      if (purchaseCommitted(material)) purchasedItems += 1;
+      else unregisteredPurchaseItems += 1;
+
+      // Cada compra contribui de 0 a 1. Recebimentos parciais contam
+      // proporcionalmente, independentemente da unidade do material.
+      const receivedFraction = clamp(receivedPurchaseQty(material) / alloc.purchaseQty, 0, 1);
+      receivedProgress += receivedFraction;
+      if (receivedFraction >= 1 - epsilon) receivedCompleteItems += 1;
+    }
+
+    const separatedFraction = clamp(quantityNumber(material, material.separatedQty) / required, 0, 1);
+    separatedProgress += separatedFraction;
+    if (separatedFraction >= 1 - epsilon) separatedCompleteItems += 1;
+
+    // Resolvido = toda a necessidade classificada entre compra/estoque
+    // e, quando houver compra, pedido efetivamente registrado.
+    if (alloc.unallocatedQty <= epsilon && (alloc.purchaseQty <= epsilon || purchaseCommitted(material))) {
+      resolvedItems += 1;
+    }
+  });
+
+  return {
+    totalItems: items.length,
+    undefinedItems,
+    missingQuantityItems,
+    unregisteredPurchaseItems,
+    purchased: { ...honestStagePercent(purchasedItems, purchaseItems), current: purchasedItems, total: purchaseItems },
+    received: { ...honestStagePercent(receivedProgress, purchaseItems), current: receivedCompleteItems, total: purchaseItems },
+    separated: { ...honestStagePercent(separatedProgress, items.length), current: separatedCompleteItems, total: items.length },
+    resolved: { ...honestStagePercent(resolvedItems, items.length), current: resolvedItems, total: items.length }
+  };
+}
+
 function statusForMaterial(material) {
   const required = Math.max(0, quantityNumber(material, material.qtyRequired));
   const separated = quantityNumber(material, material.separatedQty);
@@ -218,6 +285,16 @@ function ensureStyle() {
     .sep-donut-label strong{font-size:20px;color:#0f172a}
     .sep-donut-label small{margin-top:5px;color:#64748b;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
     .sep-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:18px 0 14px}
+    .sep-stage-progress{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:18px 0 12px}
+    .sep-stage-meter{min-width:0;padding:10px 9px;background:#f8fafc;border:1px solid #edf1f5;border-radius:12px}
+    .sep-stage-top{display:flex;flex-direction:column;gap:5px}
+    .sep-stage-top span{color:#475569;font-size:10px;font-weight:700}
+    .sep-stage-top strong{color:#0f172a;font-size:18px;line-height:1;font-weight:800}
+    .sep-stage-track{height:5px;margin:9px 0 6px;background:#e2e8f0;border-radius:999px;overflow:hidden}
+    .sep-stage-track i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#0f766e,#14b8a6)}
+    .sep-stage-meter small{display:block;min-width:0;color:#64748b;font-size:9px;line-height:1.35}
+    .sep-progress-alert{margin:0 0 14px;padding:9px 10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;color:#9a3412;font-size:10px;font-weight:750;line-height:1.4}
+
     .sep-stat{min-width:0;padding:10px 9px;border-radius:12px;background:#f8fafc;border:1px solid #edf1f5}
     .sep-stat strong{display:block;color:#0f172a;font-size:16px;line-height:1.1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .sep-stat span{display:block;margin-top:4px;color:#64748b;font-size:10px;font-weight:600}
@@ -291,10 +368,10 @@ function arrowIcon() {
   return '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>';
 }
 
-function donut(summary, size = 92) {
+function donut(summary, size = 92, label = 'separado') {
   return `
-    <div class="sep-donut" style="--value:${summary.visual};--size:${size}px" aria-label="${summary.label} separado">
-      <div class="sep-donut-label"><strong>${summary.label}</strong><small>separado</small></div>
+    <div class="sep-donut" style="--value:${summary.visual};--size:${size}px" aria-label="${summary.label} ${escapeHtml(label)}">
+      <div class="sep-donut-label"><strong>${summary.label}</strong><small>${escapeHtml(label)}</small></div>
     </div>`;
 }
 
@@ -313,8 +390,18 @@ function projectSearchText(projectId, project) {
   ].filter(Boolean).join(' '));
 }
 
+function stageMeter(label, meta, explanation) {
+  return `<div class="sep-stage-meter" title="${escapeHtml(explanation)}">
+    <div class="sep-stage-top"><span>${escapeHtml(label)}</span><strong>${meta.label}</strong></div>
+    <div class="sep-stage-track"><i style="width:${meta.visual}%"></i></div>
+    <small>${meta.total ? `${meta.current} de ${meta.total} itens completos` : 'Sem itens nesta etapa'}</small>
+  </div>`;
+}
+
 function projectCard(projectId, project) {
-  const summary = separationSummary(projectMaterials(projectId));
+  const items = projectMaterials(projectId);
+  const summary = separationSummary(items);
+  const progress = workProgress(items);
   const preview = summary.categories.slice(0, 4);
   const remaining = Math.max(0, summary.categories.length - preview.length);
   const categories = preview.length
@@ -332,17 +419,22 @@ function projectCard(projectId, project) {
           <h3 title="${escapeHtml(project.name || 'Obra sem nome')}">${escapeHtml(project.name || 'Obra sem nome')}</h3>
           <p title="${escapeHtml(project.client || project.address || 'Cliente não informado')}">${escapeHtml(project.client || project.address || 'Cliente não informado')}</p>
         </div>
-        ${donut(summary)}
+        ${donut(progress.resolved, 92, 'resolvido')}
       </div>
-      <div class="sep-stats">
-        <div class="sep-stat"><strong>${summary.totalItems}</strong><span>itens da obra</span></div>
-        <div class="sep-stat"><strong>${summary.purchasedItems}</strong><span>itens comprados</span></div>
-        <div class="sep-stat"><strong>${summary.separatedItems}</strong><span>itens separados</span></div>
+      <div class="sep-stage-progress" aria-label="Andamento da obra por etapa">
+        ${stageMeter('Comprado', progress.purchased, 'Itens com compra registrada entre os destinados à compra. Pendências sem origem aparecem no aviso.')}
+        ${stageMeter('Recebido', progress.received, 'Média dos percentuais recebidos de cada item destinado à compra. Recebimentos parciais são proporcionais.')}
+        ${stageMeter('Separado', progress.separated, 'Média da fração separada de cada material da obra, incluindo os que ainda não têm origem definida.')}
       </div>
+      ${progress.undefinedItems || progress.missingQuantityItems || progress.unregisteredPurchaseItems ? `<div class="sep-progress-alert" role="note">${[
+        progress.undefinedItems ? `${progress.undefinedItems} sem origem definida` : '',
+        progress.missingQuantityItems ? `${progress.missingQuantityItems} sem quantidade válida` : '',
+        progress.unregisteredPurchaseItems ? `${progress.unregisteredPurchaseItems} compras sem registro` : ''
+      ].filter(Boolean).join(' · ')}</div>` : ''}
       <div class="sep-category-preview">${categories}</div>
       ${remaining ? `<span class="sep-more">+ ${remaining} categoria${remaining === 1 ? '' : 's'}</span>` : ''}
       <div class="sep-card-foot">
-        <span class="sep-qty-summary">${formatQty(quantityNumber(summary, summary.separatedQty))} de ${formatQty(quantityNumber(summary, summary.requiredQty))} separados</span>
+        <span class="sep-qty-summary">${summary.completedItems} de ${summary.totalItems} itens totalmente separados</span>
         <span class="sep-open">Ver detalhes ${arrowIcon()}</span>
       </div>
     </article>`;
