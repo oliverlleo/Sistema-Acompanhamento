@@ -449,11 +449,43 @@ function summaryHtml(key, data) {
 }
 
 function categoryHtml(data) {
-  if (activeStage !== 'separado' || !data.categoryList.length) return '';
-  return `<section class="trk-categories">${data.categoryList.map(category => `
-    <article class="trk-category" title="${escapeHtml(category.name)}">
+  // As categorias são filtros dos materiais realmente listados nesta etapa.
+  // Compra e Disponível têm categorias próprias no tracking-category-progress.js.
+  if (activeStage !== 'pintura' && activeStage !== 'separado') return '';
+  const categories = new Map();
+  materials.forEach(material => {
+    const required = allocation(material).required;
+    const separated = Math.max(0, quantityNumber(material, material.separatedQty));
+    if (activeStage === 'pintura' && !material.paintingRequired) return;
+    if (activeStage === 'separado' && !(separated > 0)) return;
+
+    const name = String(material.category || 'Sem categoria').trim() || 'Sem categoria';
+    const entry = categories.get(name) || { name, items: 0, completed: 0, progress: 0 };
+    let fraction = 0;
+    if (activeStage === 'pintura') {
+      const sent = Math.max(0, quantityNumber(material, material.paintingSentQty));
+      const returned = Math.max(0, quantityNumber(material, material.paintingReturnedQty));
+      const inPainting = Math.max(0, sent - returned);
+      fraction = required > 0 ? clamp(inPainting / required, 0, 1) : 0;
+      if (inPainting > 0) entry.completed += 1;
+    } else {
+      fraction = required > 0 ? clamp(separated / required, 0, 1) : 0;
+      if (required > 0 && separated >= required) entry.completed += 1;
+    }
+    entry.progress += fraction;
+    entry.items += 1;
+    categories.set(name, entry);
+  });
+  const visibleCategories = [...categories.values()]
+    .map(category => ({ ...category, pct: percent(category.progress, category.items) }))
+    .sort((a, b) => b.pct.exact - a.pct.exact || a.name.localeCompare(b.name, 'pt-BR'));
+  if (!visibleCategories.length) return '';
+
+  const inPainting = activeStage === 'pintura';
+  return `<section class="trk-categories" aria-label="Filtrar categorias da ${inPainting ? 'pintura' : 'separação'}">${visibleCategories.map(category => `
+    <article class="trk-category" title="Filtrar ${escapeHtml(category.name)}">
       <div><span>${escapeHtml(category.name)}</span><strong>${category.pct.label}</strong></div>
-      <small>${formatQty(category.separated)} de ${formatQty(category.required)} separados</small>
+      <small>${category.completed} de ${category.items} ${inPainting ? 'itens em pintura' : 'itens totalmente separados'}</small>
     </article>`).join('')}</section>`;
 }
 
