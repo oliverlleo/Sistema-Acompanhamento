@@ -97,7 +97,7 @@ function insertRowMeasure(row, material) {
 
 async function decorateQueue() {
   const route = currentRoute();
-  if (!['compras', 'recebimento'].includes(route)) return;
+  if (route !== 'recebimento') return;
 
   const view = $('#view');
   const table = $('.data-table', view);
